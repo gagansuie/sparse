@@ -1,7 +1,7 @@
-10pak – Model Artifact Compressor
+tenpak – Model Artifact Compressor
 ====================================
 
-10pak is a Rust library and CLI for compressing and storing model artifacts
+tenpak is a Rust library and CLI for compressing and storing model artifacts
 (tensors) in a versioned, tensor-aware binary format.
 
 The goal is to provide a small, focused component that a platform (Azure AI,
@@ -39,12 +39,12 @@ compression for model weights.
 
 ## Concepts
 
-10pak works with **bundles** of named float32 tensors:
+tenpak works with **bundles** of named float32 tensors:
 
 - Each tensor has a `name`, `shape` and flat `data` array of `f32` values.
 - A bundle is a JSON file containing an array of such tensors.
 
-10pak converts these into an **artifact**:
+tenpak converts these into an **artifact**:
 
 - Each tensor is quantized to **int8** with a **per-tensor scale**:
   - Find `max_abs = max(|x|)` over the tensor.
@@ -99,12 +99,12 @@ This builds both the library and the `tenpak` CLI binary.
 cargo run -- \
   compress \
   --input examples/simple_bundle.json \
-  --output examples/simple_bundle.10pak \
+  --output examples/simple_bundle.tenpak \
   --codec int8_sym_v1
 ```
 
 - Reads `examples/simple_bundle.json` (a float32 bundle).
-- Writes a binary artifact `examples/simple_bundle.10pak` containing the
+- Writes a binary artifact `examples/simple_bundle.tenpak` containing the
   quantized tensors.
 
 To use the 4-bit codec instead:
@@ -113,7 +113,7 @@ To use the 4-bit codec instead:
 cargo run -- \
   compress \
   --input examples/simple_bundle.json \
-  --output examples/simple_bundle_int4.10pak \
+  --output examples/simple_bundle_int4.tenpak \
   --codec int4_sym_v1
 ```
 
@@ -122,7 +122,7 @@ cargo run -- \
 ```bash
 cargo run -- \
   decompress \
-  --input examples/simple_bundle.10pak \
+  --input examples/simple_bundle.tenpak \
   --output examples/restored_bundle.json
 ```
 
@@ -149,7 +149,7 @@ MAE if none satisfy it).
 ```bash
 cargo run -- \
   inspect \
-  --input examples/simple_bundle.10pak
+  --input examples/simple_bundle.tenpak
 ```
 
 This prints version, codec, number of tensors, and a short per-tensor summary.
@@ -159,15 +159,15 @@ This prints version, codec, number of tensors, and a short per-tensor summary.
 ```bash
 cargo run -- \
   delta \
-  --base examples/base.10pak \
+  --base examples/base.tenpak \
   --variant examples/ft_bundle.json \
-  --output examples/ft_delta.10pak \
+  --output examples/ft_delta.tenpak \
   --epsilon 0.001
 ```
 
 This command:
 
-- Decompresses `base.10pak`.
+- Decompresses `base.tenpak`.
 - Compares it with `ft_bundle.json` (a variant bundle) using an L1 threshold
   `epsilon` per tensor.
 - Produces a delta artifact containing only tensors that differ materially
@@ -178,9 +178,9 @@ This command:
 ```bash
 cargo run -- \
   materialize \
-  --base examples/base.10pak \
-  --delta examples/ft_delta.10pak \
-  --output examples/ft_full.10pak
+  --base examples/base.tenpak \
+  --delta examples/ft_delta.tenpak \
+  --output examples/ft_full.tenpak
 ```
 
 This reconstructs a full artifact where tensors from the delta override those
@@ -199,7 +199,7 @@ reconstruction error metrics.
 
 ## How this maps to a real platform
 
-In a production setting (e.g., Azure AI or NVIDIA NGC), a system like 10pak
+In a production setting (e.g., Azure AI or NVIDIA NGC), a system like tenpak
 would be integrated into the **model artifact storage and loading layer**:
 
 - **Storage:**
@@ -217,7 +217,7 @@ same basic idea.
 
 ## FFI and integration surface (C/C++/Python)
 
-10pak exposes a small C ABI so other languages can call the Rust core
+tenpak exposes a small C ABI so other languages can call the Rust core
 without knowing Rust:
 
 - **Compression entrypoint:**
@@ -228,11 +228,11 @@ without knowing Rust:
   - `tenpak_decompress_artifact_to_json(artifact_ptr, artifact_len, out_json_ptr, out_json_len, out_err_ptr)`
   - Takes an artifact blob and returns a JSON bundle.
 - **Memory management helpers:**
-  - `tenpak_free_buffer(ptr, len)` to free buffers returned by 10pak.
+  - `tenpak_free_buffer(ptr, len)` to free buffers returned by tenpak.
   - `tenpak_free_cstring(ptr)` to free error strings.
 
 This interface is designed so that C, C++, Python (via `ctypes`/`cffi`), or
-other languages can integrate 10pak as a drop-in component.
+other languages can integrate tenpak as a drop-in component.
 
 ### Example Python wrapper design (PyTorch / HF)
 
@@ -256,13 +256,13 @@ model tooling:
   - Use the CLI or Rust APIs to create base + delta artifacts for fine-tunes,
     then load materialized artifacts into PyTorch for inference or evaluation.
 
-This design keeps 10pak as a self-contained Rust engine, but makes it easy
+This design keeps tenpak as a self-contained Rust engine, but makes it easy
 for a platform team (Azure AI, NVIDIA NGC, Meta) to plug it into their existing
 PyTorch/C++/Python infrastructure without adopting Rust across the stack.
 
 ### Example storage economics for fine-tunes (base + delta)
 
-10pak is most powerful when you have one large base model and many
+tenpak is most powerful when you have one large base model and many
 fine-tuned variants. Instead of storing full checkpoints for each variant, you
 store a compressed base artifact plus small deltas per fine-tune.
 
@@ -271,13 +271,13 @@ Conceptually, you can compare:
 | Variant                     | Files stored                         | Total on-disk size             | Notes                                      |
 |-----------------------------|--------------------------------------|--------------------------------|--------------------------------------------|
 | Full FP fine-tune           | `base_fp.pt` + `ft_fp.pt`           | `S_base_fp + S_ft_fp`          | Two full-precision checkpoints.           |
-| Full 10pak fine-tune        | `base_fp.pt` + `ft_int4.10pak`  | `S_base_fp + S_ft_int4`        | Compress the fine-tune only.              |
-| 10pak base + delta (A)      | `base_int4.10pak` + `ft_delta`  | `S_base_int4 + S_delta`        | Compressed base + small variant delta.    |
+| Full tenpak fine-tune        | `base_fp.pt` + `ft_int4.tenpak`  | `S_base_fp + S_ft_int4`        | Compress the fine-tune only.              |
+| tenpak base + delta (A)      | `base_int4.tenpak` + `ft_delta`  | `S_base_int4 + S_delta`        | Compressed base + small variant delta.    |
 
 For a fleet of `N` fine-tunes, the comparison becomes:
 
 - **Full FP:** `N * S_ft_fp` additional bytes beyond the base model.
-- **10pak base + delta:** `S_base_int4 + N * S_delta` for the entire
+- **tenpak base + delta:** `S_base_int4 + N * S_delta` for the entire
   family, where `S_delta` is often only a small fraction of a full model.
 
 This is the kind of scaling story that matters to large platforms: as the
@@ -297,7 +297,7 @@ cd 10pak
 chmod +x scripts/run_full_eval.sh
 
 # Optional: choose model (default is gpt2)
-export 10PAK_EVAL_MODEL="gpt2"
+export TENPAK_EVAL_MODEL="gpt2"
 
 # Run the full pipeline
 ./scripts/run_full_eval.sh
@@ -315,8 +315,8 @@ Example table structure:
 | Variant           | On-disk size (GB) | Compression vs FP | Perplexity (↓) | Δ Perplexity | Task accuracy | Δ Accuracy |
 |-------------------|-------------------|-------------------|----------------|--------------|---------------|-----------|
 | FP baseline       |                   | 1.0×              |                |              |               |           |
-| 10pak int8        |                   |                   |                |              |               |           |
-| 10pak int4        |                   |                   |                |              |               |           |
+| tenpak int8        |                   |                   |                |              |               |           |
+| tenpak int4        |                   |                   |                |              |               |           |
 
 You would fill in the sizes, perplexity and any downstream metrics from your
 Python evaluation harness.
@@ -328,8 +328,8 @@ Example table structure for one base model + one fine-tune:
 | Variant                     | Files stored                         | Total on-disk size             | Notes                                      |
 |-----------------------------|--------------------------------------|--------------------------------|--------------------------------------------|
 | Full FP fine-tune           | `base_fp.pt` + `ft_fp.pt`           | `S_base_fp + S_ft_fp`          | Two full-precision checkpoints.           |
-| Full 10pak fine-tune        | `base_fp.pt` + `ft_int4.10pak`  | `S_base_fp + S_ft_int4`        | Compress the fine-tune only.              |
-| 10pak base + delta (A)      | `base_int4.10pak` + `ft_delta`  | `S_base_int4 + S_delta`        | Compressed base + small variant delta.    |
+| Full tenpak fine-tune        | `base_fp.pt` + `ft_int4.tenpak`  | `S_base_fp + S_ft_int4`        | Compress the fine-tune only.              |
+| tenpak base + delta (A)      | `base_int4.tenpak` + `ft_delta`  | `S_base_int4 + S_delta`        | Compressed base + small variant delta.    |
 
 For a fleet of many fine-tunes, you can extend this to show how the base+delta
 layout scales versus storing full checkpoints per variant.

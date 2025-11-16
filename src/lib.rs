@@ -271,7 +271,7 @@ fn ffi_set_error(err_out: *mut *mut c_char, msg: &str) {
     if err_out.is_null() {
         return;
     }
-    let cstr = CString::new(msg).unwrap_or_else(|_| CString::new("10pak error").unwrap());
+    let cstr = CString::new(msg).unwrap_or_else(|_| CString::new("tenpak error").unwrap());
     unsafe {
         *err_out = cstr.into_raw();
     }

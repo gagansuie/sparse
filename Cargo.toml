@@ -9,7 +9,7 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [[bin]]
-name = "10pak"
+name = "tenpak"
 path = "src/main.rs"
 
 [dependencies]

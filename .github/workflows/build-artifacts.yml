@@ -1,0 +1,154 @@
+name: Build and Release tenpak
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  determine-release:
+    name: Determine release version
+    runs-on: ubuntu-latest
+    outputs:
+      release_needed: ${{ steps.evaluate.outputs.release_needed }}
+      version: ${{ steps.evaluate.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect version change
+        id: evaluate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git fetch --tags --force
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml || true)
+          if [ -z "$VERSION" ]; then
+            echo "release_needed=false" >> "$GITHUB_OUTPUT"
+            echo "version=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TAG="v$VERSION"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "release_needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_needed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build-linux:
+    name: Build Linux artifacts
+    needs: determine-release
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.determine-release.outputs.version }}
+      TARGET: x86_64-unknown-linux-gnu
+      BINARY: "tenpak"
+      LIB_NAME: "tenpak"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ env.TARGET }}
+          cache-on-failure: true
+
+      - name: Build release binary and library
+        run: |
+          set -euxo pipefail
+          cargo build --release --target $TARGET
+
+      - name: Prepare release bundle
+        shell: bash
+        run: |
+          set -euxo pipefail
+          VERSION="${RELEASE_VERSION}"
+          if [ -n "$VERSION" ]; then
+            ARCHIVE_NAME="${BINARY}-${VERSION}-${TARGET}-linux.tar.gz"
+          else
+            ARCHIVE_NAME="${BINARY}-${TARGET}-linux.tar.gz"
+          fi
+
+          mkdir -p release-bundle/bin release-bundle/lib
+
+          cp "target/${TARGET}/release/${BINARY}" "release-bundle/bin/${BINARY}"
+          cp "target/${TARGET}/release/lib${LIB_NAME}.so" "release-bundle/lib/lib${LIB_NAME}.so"
+          [ -f LICENSE ] && cp LICENSE release-bundle/LICENSE || true
+          [ -f README.md ] && cp README.md release-bundle/README.md || true
+
+          tar -czf "${ARCHIVE_NAME}" -C release-bundle .
+
+          mkdir -p artifacts
+          mv "${ARCHIVE_NAME}" artifacts/
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tenpak-linux
+          path: artifacts
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub release assets
+    needs:
+      - determine-release
+      - build-linux
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.determine-release.outputs.version }}
+      TAG_NAME: v${{ needs.determine-release.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create or update GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Release $TAG_NAME already exists, will update assets"
+          else
+            git tag "$TAG_NAME"
+            git push origin "$TAG_NAME"
+            gh release create "$TAG_NAME" --title "Release $TAG_NAME" --generate-notes
+          fi
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tenpak-*
+          path: release
+
+      - name: Upload bundles to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          files=$(find release -name 'tenpak-*.tar.gz' -print)
+          if [ -z "$files" ]; then
+            echo "No tarballs found to upload" >&2
+            exit 1
+          fi
+          for tarball in $files; do
+            gh release upload "$TAG_NAME" "$tarball" --clobber
+          done
