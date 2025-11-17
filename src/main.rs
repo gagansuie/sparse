@@ -1,4 +1,5 @@
 use std::fs;
+use std::process::Command;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -89,6 +90,16 @@ enum Commands {
         #[arg(short, long)]
         output: String,
     },
+    /// Run the full evaluation pipeline (downloads models, computes metrics, prints updated README)
+    #[command(name = "runeval")]
+    RunEval {
+        /// Model to evaluate (default: gpt2)
+        #[arg(long, default_value = "gpt2")]
+        model: String,
+        /// Number of evaluation samples (default: 128)
+        #[arg(long, default_value_t = 128)]
+        samples: usize,
+    },
 }
 
 fn main() -> Result<()> {
@@ -119,6 +130,7 @@ fn main() -> Result<()> {
             delta,
             output,
         } => materialize_cmd(&base, &delta, &output)?,
+        Commands::RunEval { model, samples } => runeval_cmd(&model, samples)?,
     }
 
     Ok(())
@@ -398,6 +410,120 @@ fn delta_cmd(base: &str, variant: &str, output: &str, epsilon: f32) -> Result<()
     );
 
     Ok(())
+}
+
+fn runeval_cmd(model: &str, samples: usize) -> Result<()> {
+    println!("[tenpak] Starting evaluation pipeline");
+    println!("[tenpak] Model: {}", model);
+    println!("[tenpak] Samples: {}", samples);
+
+    // Find the binary location
+    let exe = std::env::current_exe().context("Failed to get executable path")?;
+    let exe_dir = exe.parent().context("Failed to get executable directory")?;
+
+    // Determine root directory based on where binary is located
+    // For cargo build: binary is in target/release/tenpak, root is ../..
+    // For packaged: binary is in bin/tenpak, root is ..
+    let root_dir = if exe_dir.ends_with("target/release") || exe_dir.ends_with("target\\release") {
+        // Running from cargo build - go up two levels
+        exe_dir
+            .parent()
+            .and_then(|p| p.parent())
+            .context("Failed to find project root")?
+            .to_path_buf()
+    } else if exe_dir.ends_with("bin") {
+        // Running from packaged binary - go up one level
+        exe_dir
+            .parent()
+            .context("Failed to find project root")?
+            .to_path_buf()
+    } else {
+        // Fallback: assume current directory
+        std::env::current_dir().context("Failed to get current directory")?
+    };
+
+    println!("[tenpak] Project root: {}", root_dir.display());
+
+    // Check for Python
+    let python = find_python()?;
+    println!("[tenpak] Using Python: {}", python);
+
+    // Look for scripts directory
+    let scripts_dir = root_dir.join("scripts");
+    if !scripts_dir.exists() {
+        return Err(anyhow::Error::msg(
+            format!("Scripts directory not found at: {}\nMake sure the tenpak package includes the scripts/ directory.", scripts_dir.display())
+        ));
+    }
+
+    // Check if download script exists
+    let download_script = scripts_dir.join("download_demo_models.sh");
+    if !download_script.exists() {
+        return Err(anyhow::Error::msg(format!(
+            "Download script not found at: {}",
+            download_script.display()
+        )));
+    }
+
+    // Run download script
+    println!("[tenpak] Downloading models...");
+    let status = Command::new("bash")
+        .arg(&download_script)
+        .current_dir(&root_dir)
+        .env("MODELS", model)
+        .status()
+        .context("Failed to run download script")?;
+
+    if !status.success() {
+        return Err(anyhow::Error::msg("Model download failed"));
+    }
+
+    // Check if eval script exists
+    let eval_script = scripts_dir.join("run_eval_and_update_readme.py");
+    if !eval_script.exists() {
+        return Err(anyhow::Error::msg(format!(
+            "Evaluation script not found at: {}",
+            eval_script.display()
+        )));
+    }
+
+    // Run evaluation script
+    println!("[tenpak] Running evaluation...");
+    let status = Command::new(&python)
+        .arg(&eval_script)
+        .current_dir(&root_dir)
+        .env("TENPAK_EVAL_MODEL", model)
+        .env("TENPAK_EVAL_SAMPLES", samples.to_string())
+        .env("TENPAK_BIN", exe.to_string_lossy().to_string())
+        .status()
+        .context("Failed to run evaluation script")?;
+
+    if !status.success() {
+        return Err(anyhow::Error::msg("Evaluation failed"));
+    }
+
+    println!("[tenpak] Evaluation complete!");
+
+    Ok(())
+}
+
+fn find_python() -> Result<String> {
+    let candidates = ["python3", "python"];
+
+    for cmd in &candidates {
+        if Command::new(cmd)
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return Ok(cmd.to_string());
+        }
+    }
+
+    Err(anyhow::Error::msg(
+        "Python not found. Please install Python 3 (python3 or python must be in PATH)",
+    ))
 }
 
 fn materialize_cmd(base: &str, delta: &str, output: &str) -> Result<()> {

@@ -287,8 +287,32 @@ simple, local operation at load time.
 
 ## Run the full evaluation pipeline
 
-After setting up the project, you can run the end-to-end demo (download models,
-compute metrics, and update the README) with:
+### Using the CLI (recommended)
+
+The easiest way to run the full evaluation pipeline is using the built-in `runeval` command:
+
+```bash
+# Build the CLI
+cargo build --release
+
+# Run evaluation with default settings (gpt2, 128 samples)
+./target/release/tenpak runeval
+
+# Or customize the model and sample count
+./target/release/tenpak runeval --model gpt2 --samples 256
+```
+
+The `runeval` command will:
+- Check for Python installation
+- Download the specified model automatically
+- Compress the model with int8 and int4 codecs
+- Compute perplexity metrics
+- Create simulated fine-tune and delta artifacts
+- **Print the updated README to stdout** (copy and paste into README.md)
+
+### Using the shell script (alternative)
+
+You can also run the evaluation using the orchestration script:
 
 ```bash
 cd tenpak
@@ -305,7 +329,25 @@ export TENPAK_EVAL_MODEL="gpt2"
 
 ### Running on EC2
 
-To run the evaluation on an EC2 instance:
+#### Option 1: Using packaged binary (from CI/CD)
+
+```bash
+# Copy tarball to EC2 (must include scripts/ directory - see CICD_PACKAGING.md)
+scp tenpak.tar.gz ubuntu@your-ec2-instance:/mnt/
+
+# SSH to EC2 and extract
+ssh ubuntu@your-ec2-instance
+cd /mnt
+tar -xzf tenpak.tar.gz
+
+# Run evaluation
+cd tenpak
+./bin/tenpak runeval
+
+# The updated README will be printed - copy and paste it back
+```
+
+#### Option 2: From source
 
 ```bash
 # Copy the entire project to EC2
@@ -314,9 +356,13 @@ scp -r tenpak ubuntu@your-ec2-instance:/home/ubuntu/
 # SSH to EC2 and run
 ssh ubuntu@your-ec2-instance
 cd /home/ubuntu/tenpak
-chmod +x scripts/run_full_eval.sh
-./scripts/run_full_eval.sh
+
+# Build and run
+cargo build --release
+./target/release/tenpak runeval
 ```
+
+**Note:** The packaged binary must include the `scripts/` directory. See `CICD_PACKAGING.md` for details.
 
 ## Results (fill in with your own evals)
 

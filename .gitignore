@@ -9,3 +9,7 @@
 .vscode/
 .DS_Store
 *.log
+/.tenpak-eval-venv/
+/models/
+/tmp_eval/
+/dist/
