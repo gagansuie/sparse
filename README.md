@@ -332,15 +332,15 @@ export TENPAK_EVAL_MODEL="gpt2"
 #### Option 1: Using packaged binary (from CI/CD)
 
 ```bash
-# Copy tarball to EC2 (must include scripts/ directory - see CICD_PACKAGING.md)
-scp tenpak.tar.gz ubuntu@your-ec2-instance:/mnt/
+# Copy tarball to EC2
+scp -i key.pem tenpak.tar.gz ubuntu@your-ec2-instance:~/
 
 # SSH to EC2 and extract
-ssh ubuntu@your-ec2-instance
-cd /mnt
+ssh -i key.pem ubuntu@your-ec2-instance
+cd ~
 tar -xzf tenpak.tar.gz
 
-# Run evaluation
+# Run evaluation (scripts are embedded in the binary)
 cd tenpak
 ./bin/tenpak runeval
 
@@ -362,7 +362,7 @@ cargo build --release
 ./target/release/tenpak runeval
 ```
 
-**Note:** The packaged binary must include the `scripts/` directory. See `CICD_PACKAGING.md` for details.
+**Note:** The scripts are embedded in the binary - no external files needed!
 
 ## Results (fill in with your own evals)
 

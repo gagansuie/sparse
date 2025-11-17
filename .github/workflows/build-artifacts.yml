@@ -63,33 +63,27 @@ jobs:
           shared-key: ${{ env.TARGET }}
           cache-on-failure: true
 
-      - name: Build release binary and library
-        run: |
-          set -euxo pipefail
-          cargo build --release --target $TARGET
-
-      - name: Prepare release bundle
+      - name: Build and package using package.sh
         shell: bash
         run: |
           set -euxo pipefail
+          # Use the packaging script (builds binary, creates tarball with embedded scripts)
+          chmod +x scripts/package.sh
+          ./scripts/package.sh
+          
+          # Rename tarball to include version and target
           VERSION="${RELEASE_VERSION}"
           if [ -n "$VERSION" ]; then
-            ARCHIVE_NAME="${BINARY}-${VERSION}-${TARGET}-linux.tar.gz"
+            ARCHIVE_NAME="${BINARY}-${VERSION}-${TARGET}.tar.gz"
           else
-            ARCHIVE_NAME="${BINARY}-${TARGET}-linux.tar.gz"
+            ARCHIVE_NAME="${BINARY}-${TARGET}.tar.gz"
           fi
-
-          mkdir -p release-bundle/bin release-bundle/lib
-
-          cp "target/${TARGET}/release/${BINARY}" "release-bundle/bin/${BINARY}"
-          cp "target/${TARGET}/release/lib${LIB_NAME}.so" "release-bundle/lib/lib${LIB_NAME}.so"
-          [ -f LICENSE ] && cp LICENSE release-bundle/LICENSE || true
-          [ -f README.md ] && cp README.md release-bundle/README.md || true
-
-          tar -czf "${ARCHIVE_NAME}" -C release-bundle .
-
+          
           mkdir -p artifacts
-          mv "${ARCHIVE_NAME}" artifacts/
+          mv tenpak.tar.gz "artifacts/${ARCHIVE_NAME}"
+          
+          echo "✓ Package created: ${ARCHIVE_NAME}"
+          echo "✓ Scripts are embedded in the binary"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

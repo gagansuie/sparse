@@ -34,17 +34,29 @@ mkdir -p "${MODELS_DIR}"
 echo "[10pak] Root directory: ${ROOT_DIR}"
 echo "[10pak] Models directory: ${MODELS_DIR}"
 
-echo "[10pak] Creating virtualenv at ${VENV_DIR} (if not exists)"
-python3 -m venv "${VENV_DIR}"
-# shellcheck disable=SC1090
-source "${VENV_DIR}/bin/activate"
+# Check if required packages are already available
+if python3 -c "import torch, transformers" 2>/dev/null; then
+  echo "[10pak] Using existing Python environment (torch & transformers found)"
+  PYTHON_CMD="python3"
+  # Install missing packages if needed
+  python3 -m pip install --quiet datasets accelerate huggingface_hub 2>/dev/null || true
+else
+  echo "[10pak] Creating virtualenv at ${VENV_DIR} (if not exists)"
+  python3 -m venv "${VENV_DIR}"
+  # shellcheck disable=SC1090
+  source "${VENV_DIR}/bin/activate"
+  PYTHON_CMD="python"
+fi
 
-pip install --upgrade pip >/dev/null
-pip install "transformers[torch]" datasets accelerate huggingface_hub >/dev/null
+if [[ "${PYTHON_CMD}" == "python" ]]; then
+  # Only install if using venv
+  pip install --upgrade pip >/dev/null
+  pip install "transformers[torch]" datasets accelerate huggingface_hub >/dev/null
+fi
 
 echo "[10pak] Downloading models: ${MODELS_TO_DOWNLOAD[*]}"
 
-python << 'EOF'
+${PYTHON_CMD} << 'EOF'
 import os
 from pathlib import Path
 
