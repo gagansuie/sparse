@@ -159,15 +159,57 @@ def main():
         "--codec",
         "int4_sym_v1",
     ])
+    
+    base_int4_perchannel_artifact = TMP_DIR / "base_int4_perchannel.tenpak"
+    run_tenpak_cli([
+        "compress",
+        "--input",
+        str(base_bundle_path),
+        "--output",
+        str(base_int4_perchannel_artifact),
+        "--codec",
+        "int4_perchannel_v1",
+    ])
+    
+    base_int4_sparse_artifact = TMP_DIR / "base_int4_sparse.tenpak"
+    run_tenpak_cli([
+        "compress",
+        "--input",
+        str(base_bundle_path),
+        "--output",
+        str(base_int4_sparse_artifact),
+        "--codec",
+        "int4_perchannel_sparse50_v1",
+    ])
+    
+    base_int2_artifact = TMP_DIR / "base_int2.tenpak"
+    run_tenpak_cli([
+        "compress",
+        "--input",
+        str(base_bundle_path),
+        "--output",
+        str(base_int2_artifact),
+        "--codec",
+        "int2_sym_v1",
+    ])
 
     size_int8_bytes = base_int8_artifact.stat().st_size
     size_int4_bytes = base_int4_artifact.stat().st_size
+    size_int4_perchannel_bytes = base_int4_perchannel_artifact.stat().st_size
+    size_int4_sparse_bytes = base_int4_sparse_artifact.stat().st_size
+    size_int2_bytes = base_int2_artifact.stat().st_size
     size_int8_gb = size_int8_bytes / 1e9
     size_int4_gb = size_int4_bytes / 1e9
+    size_int4_perchannel_gb = size_int4_perchannel_bytes / 1e9
+    size_int4_sparse_gb = size_int4_sparse_bytes / 1e9
+    size_int2_gb = size_int2_bytes / 1e9
 
     # Decompress artifacts back to JSON bundles
     base_int8_bundle_path = TMP_DIR / "base_bundle_int8.json"
     base_int4_bundle_path = TMP_DIR / "base_bundle_int4.json"
+    base_int4_perchannel_bundle_path = TMP_DIR / "base_bundle_int4_perchannel.json"
+    base_int4_sparse_bundle_path = TMP_DIR / "base_bundle_int4_sparse.json"
+    base_int2_bundle_path = TMP_DIR / "base_bundle_int2.json"
 
     run_tenpak_cli([
         "decompress",
@@ -183,11 +225,38 @@ def main():
         "--output",
         str(base_int4_bundle_path),
     ])
+    run_tenpak_cli([
+        "decompress",
+        "--input",
+        str(base_int4_perchannel_artifact),
+        "--output",
+        str(base_int4_perchannel_bundle_path),
+    ])
+    run_tenpak_cli([
+        "decompress",
+        "--input",
+        str(base_int4_sparse_artifact),
+        "--output",
+        str(base_int4_sparse_bundle_path),
+    ])
+    run_tenpak_cli([
+        "decompress",
+        "--input",
+        str(base_int2_artifact),
+        "--output",
+        str(base_int2_bundle_path),
+    ])
 
     with base_int8_bundle_path.open() as f:
         base_int8_bundle = json.load(f)
     with base_int4_bundle_path.open() as f:
         base_int4_bundle = json.load(f)
+    with base_int4_perchannel_bundle_path.open() as f:
+        base_int4_perchannel_bundle = json.load(f)
+    with base_int4_sparse_bundle_path.open() as f:
+        base_int4_sparse_bundle = json.load(f)
+    with base_int2_bundle_path.open() as f:
+        base_int2_bundle = json.load(f)
 
     # Rebuild models from quantized bundles and compute perplexity
     print("[tenpak] Evaluating int8 reconstructed model...")
@@ -197,22 +266,52 @@ def main():
     model_int8.to(device)
     ppl_int8 = compute_perplexity(model_int8, tokenizer, texts, device)
 
-    print("[tenpak] Evaluating int4 reconstructed model...")
+    print("[tenpak] Evaluating int4 (per-tensor) reconstructed model...")
     int4_sd = bundle_to_state_dict(base_int4_bundle)
     model_int4 = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
     model_int4.load_state_dict(int4_sd)
     model_int4.to(device)
     ppl_int4 = compute_perplexity(model_int4, tokenizer, texts, device)
 
+    print("[tenpak] Evaluating int4 (per-channel) reconstructed model...")
+    int4_perchannel_sd = bundle_to_state_dict(base_int4_perchannel_bundle)
+    model_int4_perchannel = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
+    model_int4_perchannel.load_state_dict(int4_perchannel_sd)
+    model_int4_perchannel.to(device)
+    ppl_int4_perchannel = compute_perplexity(model_int4_perchannel, tokenizer, texts, device)
+
+    print("[tenpak] Evaluating int4 (sparse 50%) reconstructed model...")
+    int4_sparse_sd = bundle_to_state_dict(base_int4_sparse_bundle)
+    model_int4_sparse = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
+    model_int4_sparse.load_state_dict(int4_sparse_sd)
+    model_int4_sparse.to(device)
+    ppl_int4_sparse = compute_perplexity(model_int4_sparse, tokenizer, texts, device)
+
+    print("[tenpak] Evaluating int2 reconstructed model...")
+    int2_sd = bundle_to_state_dict(base_int2_bundle)
+    model_int2 = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
+    model_int2.load_state_dict(int2_sd)
+    model_int2.to(device)
+    ppl_int2 = compute_perplexity(model_int2, tokenizer, texts, device)
+
     compression_int8 = size_fp_bytes / size_int8_bytes if size_int8_bytes > 0 else float("nan")
     compression_int4 = size_fp_bytes / size_int4_bytes if size_int4_bytes > 0 else float("nan")
+    compression_int4_perchannel = size_fp_bytes / size_int4_perchannel_bytes if size_int4_perchannel_bytes > 0 else float("nan")
+    compression_int4_sparse = size_fp_bytes / size_int4_sparse_bytes if size_int4_sparse_bytes > 0 else float("nan")
+    compression_int2 = size_fp_bytes / size_int2_bytes if size_int2_bytes > 0 else float("nan")
     delta_ppl_int8 = ppl_int8 - ppl_fp
     delta_ppl_int4 = ppl_int4 - ppl_fp
+    delta_ppl_int4_perchannel = ppl_int4_perchannel - ppl_fp
+    delta_ppl_int4_sparse = ppl_int4_sparse - ppl_fp
+    delta_ppl_int2 = ppl_int2 - ppl_fp
 
     print("[tenpak] Codec results:")
-    print(f"  FP baseline : size={size_fp_gb:.3f} GB, ppl={ppl_fp:.4f}")
-    print(f"  tenpak int8 : size={size_int8_gb:.3f} GB, ratio={compression_int8:.2f}x, ppl={ppl_int8:.4f} (Δ={delta_ppl_int8:+.4f})")
-    print(f"  tenpak int4 : size={size_int4_gb:.3f} GB, ratio={compression_int4:.2f}x, ppl={ppl_int4:.4f} (Δ={delta_ppl_int4:+.4f})")
+    print(f"  FP baseline          : size={size_fp_gb:.3f} GB, ppl={ppl_fp:.4f}")
+    print(f"  tenpak int8          : size={size_int8_gb:.3f} GB, ratio={compression_int8:.2f}x, ppl={ppl_int8:.4f} (Δ={delta_ppl_int8:+.4f})")
+    print(f"  tenpak int4 (tensor) : size={size_int4_gb:.3f} GB, ratio={compression_int4:.2f}x, ppl={ppl_int4:.4f} (Δ={delta_ppl_int4:+.4f})")
+    print(f"  tenpak int4 (channel): size={size_int4_perchannel_gb:.3f} GB, ratio={compression_int4_perchannel:.2f}x, ppl={ppl_int4_perchannel:.4f} (Δ={delta_ppl_int4_perchannel:+.4f})")
+    print(f"  tenpak int4 (sparse) : size={size_int4_sparse_gb:.3f} GB, ratio={compression_int4_sparse:.2f}x, ppl={ppl_int4_sparse:.4f} (Δ={delta_ppl_int4_sparse:+.4f})")
+    print(f"  tenpak int2          : size={size_int2_gb:.3f} GB, ratio={compression_int2:.2f}x, ppl={ppl_int2:.4f} (Δ={delta_ppl_int2:+.4f})")
 
     # Simulated small fine-tune: modify a small subset of parameters
     print(f"[tenpak] Creating simulated fine-tune by modifying a subset of weights...")
@@ -290,15 +389,21 @@ def main():
     readme = README_PATH.read_text()
 
     old_codec_block = (
-        "| FP baseline       |                   | 1.0×              |                |              |               |           |\n"
-        "| tenpak int8        |                   |                   |                |              |               |           |\n"
-        "| tenpak int4        |                   |                   |                |              |               |           |"
+        "| FP baseline            |                   | 1.0×              |                |              |               |           |\n"
+        "| tenpak int8            |                   |                   |                |              |               |           |\n"
+        "| tenpak int4 (tensor)   |                   |                   |                |              |               |           |\n"
+        "| tenpak int4 (channel)  |                   |                   |                |              |               |           |\n"
+        "| tenpak int4 (sparse)   |                   |                   |                |              |               |           |\n"
+        "| tenpak int2            |                   |                   |                |              |               |           |"
     )
 
     new_codec_block = (
-        f"| FP baseline       | {size_fp_gb:.3f} | 1.0×              | {ppl_fp:.3f} | 0.0          | N/A           | N/A       |\n"
-        f"| tenpak int8        | {size_int8_gb:.3f} | {compression_int8:.2f}× | {ppl_int8:.3f} | {delta_ppl_int8:+.3f} | N/A           | N/A       |\n"
-        f"| tenpak int4        | {size_int4_gb:.3f} | {compression_int4:.2f}× | {ppl_int4:.3f} | {delta_ppl_int4:+.3f} | N/A           | N/A       |"
+        f"| FP baseline            | {size_fp_gb:.3f} | 1.0×              | {ppl_fp:.3f} | 0.0          | N/A           | N/A       |\n"
+        f"| tenpak int8            | {size_int8_gb:.3f} | {compression_int8:.2f}× | {ppl_int8:.3f} | {delta_ppl_int8:+.3f} | N/A           | N/A       |\n"
+        f"| tenpak int4 (tensor)   | {size_int4_gb:.3f} | {compression_int4:.2f}× | {ppl_int4:.3f} | {delta_ppl_int4:+.3f} | N/A           | N/A       |\n"
+        f"| tenpak int4 (channel)  | {size_int4_perchannel_gb:.3f} | {compression_int4_perchannel:.2f}× | {ppl_int4_perchannel:.3f} | {delta_ppl_int4_perchannel:+.3f} | N/A           | N/A       |\n"
+        f"| tenpak int4 (sparse)   | {size_int4_sparse_gb:.3f} | {compression_int4_sparse:.2f}× | {ppl_int4_sparse:.3f} | {delta_ppl_int4_sparse:+.3f} | N/A           | N/A       |\n"
+        f"| tenpak int2            | {size_int2_gb:.3f} | {compression_int2:.2f}× | {ppl_int2:.3f} | {delta_ppl_int2:+.3f} | N/A           | N/A       |"
     )
 
     readme = readme.replace(old_codec_block, new_codec_block)

@@ -9,6 +9,12 @@ pub const ARTIFACT_VERSION: u32 = 1;
 pub const CODEC_INT8_SYM_V1: &str = "int8_sym_v1";
 /// Symmetric per-tensor int4 codec identifier (two 4-bit values per byte).
 pub const CODEC_INT4_SYM_V1: &str = "int4_sym_v1";
+/// Symmetric per-channel int4 codec identifier (per-output-channel quantization).
+pub const CODEC_INT4_PERCHANNEL_V1: &str = "int4_perchannel_v1";
+/// Per-channel int4 with 50% magnitude pruning (sparse).
+pub const CODEC_INT4_PERCHANNEL_SPARSE50_V1: &str = "int4_perchannel_sparse50_v1";
+/// Symmetric per-tensor int2 codec identifier (four 2-bit values per byte).
+pub const CODEC_INT2_SYM_V1: &str = "int2_sym_v1";
 
 /// A single float32 tensor in a simple JSON-friendly format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,14 +30,21 @@ pub struct FloatBundle {
     pub tensors: Vec<FloatTensor>,
 }
 
-/// A quantized tensor: encoded values plus a per-tensor scale.
+/// A quantized tensor: encoded values plus scale(s).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantizedTensor {
     pub name: String,
     pub shape: Vec<usize>,
+    /// Per-tensor scale (for per-tensor codecs) or first scale (for backward compat).
     pub scale: f32,
+    /// Per-channel scales (for per-channel codecs). Empty for per-tensor codecs.
+    #[serde(default)]
+    pub scales: Vec<f32>,
     /// Raw encoded bytes. Interpretation depends on the codec.
     pub data: Vec<u8>,
+    /// Sparse indices (for sparse codecs). Empty for dense codecs.
+    #[serde(default)]
+    pub indices: Vec<u32>,
 }
 
 /// On-disk artifact: versioned container for quantized tensors.
@@ -58,6 +71,9 @@ pub fn compress_bundle_with_codec(
     match codec {
         CODEC_INT8_SYM_V1 => compress_int8_sym(bundle),
         CODEC_INT4_SYM_V1 => compress_int4_sym(bundle),
+        CODEC_INT4_PERCHANNEL_V1 => compress_int4_perchannel(bundle),
+        CODEC_INT4_PERCHANNEL_SPARSE50_V1 => compress_int4_perchannel_sparse50(bundle),
+        CODEC_INT2_SYM_V1 => compress_int2_sym(bundle),
         other => Err(format!("Unsupported codec '{}'", other)),
     }
 }
@@ -98,7 +114,9 @@ fn compress_int8_sym(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
             name: t.name.clone(),
             shape: t.shape.clone(),
             scale,
+            scales: Vec::new(),
             data: encoded,
+            indices: Vec::new(),
         });
     }
 
@@ -148,13 +166,314 @@ fn compress_int4_sym(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
             name: t.name.clone(),
             shape: t.shape.clone(),
             scale,
+            scales: Vec::new(),
             data: packed,
+            indices: Vec::new(),
         });
     }
 
     Ok(ArtifactFile {
         version: ARTIFACT_VERSION,
         codec: CODEC_INT4_SYM_V1.to_string(),
+        tensors: tensors_out,
+    })
+}
+
+fn compress_int4_perchannel(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
+    let mut tensors_out = Vec::with_capacity(bundle.tensors.len());
+
+    for t in &bundle.tensors {
+        let expected = expected_len(&t.shape)?;
+        if expected != t.data.len() {
+            return Err(format!(
+                "Tensor '{}' has shape {:?} (size {}), but data length {}",
+                t.name,
+                t.shape,
+                expected,
+                t.data.len()
+            ));
+        }
+
+        // For per-channel quantization, we need at least 2D tensors (out_channels, ...)
+        // For 1D tensors (biases), fall back to per-tensor quantization
+        if t.shape.len() < 2 {
+            // Fall back to per-tensor for 1D tensors
+            let max_abs = t.data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+            let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
+            let inv_scale = 1.0 / scale;
+
+            let mut packed: Vec<u8> = Vec::with_capacity((t.data.len() + 1) / 2);
+            let mut iter = t.data.iter();
+            while let Some(&x0) = iter.next() {
+                let v0 = (x0 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                let mut byte: u8 = (v0 as i32 & 0x0f) as u8;
+
+                if let Some(&x1) = iter.next() {
+                    let v1 = (x1 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                    let hi = ((v1 as i32 & 0x0f) as u8) << 4;
+                    byte |= hi;
+                }
+
+                packed.push(byte);
+            }
+
+            tensors_out.push(QuantizedTensor {
+                name: t.name.clone(),
+                shape: t.shape.clone(),
+                scale,
+                scales: vec![scale], // Store as single-element vector for consistency
+                data: packed,
+                indices: Vec::new(),
+            });
+            continue;
+        }
+
+        // Per-channel quantization for 2D+ tensors
+        // Assume shape is [out_channels, ...] where out_channels is the first dimension
+        let out_channels = t.shape[0];
+        let elements_per_channel = expected / out_channels;
+
+        // Compute per-channel scales
+        let mut scales = Vec::with_capacity(out_channels);
+        for ch in 0..out_channels {
+            let start = ch * elements_per_channel;
+            let end = start + elements_per_channel;
+            let channel_data = &t.data[start..end];
+
+            let max_abs = channel_data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+            let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
+            scales.push(scale);
+        }
+
+        // Quantize with per-channel scales
+        let mut packed: Vec<u8> = Vec::with_capacity((t.data.len() + 1) / 2);
+
+        for ch in 0..out_channels {
+            let inv_scale = 1.0 / scales[ch];
+            let start = ch * elements_per_channel;
+            let end = start + elements_per_channel;
+
+            let mut ch_iter = t.data[start..end].iter();
+            while let Some(&x0) = ch_iter.next() {
+                let v0 = (x0 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                let mut byte: u8 = (v0 as i32 & 0x0f) as u8;
+
+                if let Some(&x1) = ch_iter.next() {
+                    let v1 = (x1 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                    let hi = ((v1 as i32 & 0x0f) as u8) << 4;
+                    byte |= hi;
+                }
+
+                packed.push(byte);
+            }
+        }
+
+        tensors_out.push(QuantizedTensor {
+            name: t.name.clone(),
+            shape: t.shape.clone(),
+            scale: scales[0], // Store first scale for backward compat
+            scales,
+            data: packed,
+            indices: Vec::new(),
+        });
+    }
+
+    Ok(ArtifactFile {
+        version: ARTIFACT_VERSION,
+        codec: CODEC_INT4_PERCHANNEL_V1.to_string(),
+        tensors: tensors_out,
+    })
+}
+
+fn compress_int4_perchannel_sparse50(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
+    let mut tensors_out = Vec::with_capacity(bundle.tensors.len());
+
+    for t in &bundle.tensors {
+        let expected = expected_len(&t.shape)?;
+        if expected != t.data.len() {
+            return Err(format!(
+                "Tensor '{}' has shape {:?} (size {}), but data length {}",
+                t.name,
+                t.shape,
+                expected,
+                t.data.len()
+            ));
+        }
+
+        // For 1D tensors (biases), don't prune - they're already small
+        if t.shape.len() < 2 {
+            // Fall back to dense per-tensor for 1D tensors
+            let max_abs = t.data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+            let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
+            let inv_scale = 1.0 / scale;
+
+            let mut packed: Vec<u8> = Vec::with_capacity((t.data.len() + 1) / 2);
+            let mut iter = t.data.iter();
+            while let Some(&x0) = iter.next() {
+                let v0 = (x0 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                let mut byte: u8 = (v0 as i32 & 0x0f) as u8;
+
+                if let Some(&x1) = iter.next() {
+                    let v1 = (x1 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                    let hi = ((v1 as i32 & 0x0f) as u8) << 4;
+                    byte |= hi;
+                }
+
+                packed.push(byte);
+            }
+
+            tensors_out.push(QuantizedTensor {
+                name: t.name.clone(),
+                shape: t.shape.clone(),
+                scale,
+                scales: vec![scale],
+                data: packed,
+                indices: Vec::new(),
+            });
+            continue;
+        }
+
+        // Per-channel quantization with 50% magnitude pruning for 2D+ tensors
+        let out_channels = t.shape[0];
+        let elements_per_channel = expected / out_channels;
+
+        // Compute per-channel scales from non-pruned values
+        let mut scales = Vec::with_capacity(out_channels);
+        let mut channel_thresholds = Vec::with_capacity(out_channels);
+
+        for ch in 0..out_channels {
+            let start = ch * elements_per_channel;
+            let end = start + elements_per_channel;
+            let channel_data = &t.data[start..end];
+
+            // Find 50th percentile magnitude as threshold
+            let mut abs_vals: Vec<f32> = channel_data.iter().map(|v| v.abs()).collect();
+            abs_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let threshold = abs_vals[abs_vals.len() / 2]; // 50th percentile
+            channel_thresholds.push(threshold);
+
+            // Compute scale from values above threshold
+            let max_abs = channel_data
+                .iter()
+                .filter(|v| v.abs() > threshold)
+                .map(|v| v.abs())
+                .fold(0.0_f32, f32::max);
+            let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
+            scales.push(scale);
+        }
+
+        // Quantize and store only non-pruned values with their indices
+        let mut packed: Vec<u8> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+
+        for ch in 0..out_channels {
+            let inv_scale = 1.0 / scales[ch];
+            let threshold = channel_thresholds[ch];
+            let start = ch * elements_per_channel;
+            let end = start + elements_per_channel;
+
+            let mut pending_nibble: Option<(u8, u32)> = None;
+
+            for (local_idx, &x) in t.data[start..end].iter().enumerate() {
+                // Prune values below threshold
+                if x.abs() <= threshold {
+                    continue;
+                }
+
+                let global_idx = (start + local_idx) as u32;
+                let v = (x * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                let nibble = (v as i32 & 0x0f) as u8;
+
+                if let Some((prev_nibble, prev_idx)) = pending_nibble {
+                    // Pack two nibbles into one byte
+                    let byte = prev_nibble | (nibble << 4);
+                    packed.push(byte);
+                    indices.push(prev_idx);
+                    indices.push(global_idx);
+                    pending_nibble = None;
+                } else {
+                    pending_nibble = Some((nibble, global_idx));
+                }
+            }
+
+            // Handle leftover nibble
+            if let Some((nibble, idx)) = pending_nibble {
+                packed.push(nibble);
+                indices.push(idx);
+            }
+        }
+
+        tensors_out.push(QuantizedTensor {
+            name: t.name.clone(),
+            shape: t.shape.clone(),
+            scale: scales[0],
+            scales,
+            data: packed,
+            indices,
+        });
+    }
+
+    Ok(ArtifactFile {
+        version: ARTIFACT_VERSION,
+        codec: CODEC_INT4_PERCHANNEL_SPARSE50_V1.to_string(),
+        tensors: tensors_out,
+    })
+}
+
+fn compress_int2_sym(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
+    let mut tensors_out = Vec::with_capacity(bundle.tensors.len());
+
+    for t in &bundle.tensors {
+        let expected = expected_len(&t.shape)?;
+        if expected != t.data.len() {
+            return Err(format!(
+                "Tensor '{}' has shape {:?} (size {}), but data length {}",
+                t.name,
+                t.shape,
+                expected,
+                t.data.len()
+            ));
+        }
+
+        let max_abs = t.data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+        let scale = if max_abs > 0.0 { max_abs / 1.0 } else { 1.0 };
+        let inv_scale = 1.0 / scale;
+
+        // Quantize to [-1, 1] and pack four 2-bit values per byte.
+        let mut packed: Vec<u8> = Vec::with_capacity((t.data.len() + 3) / 4);
+        let mut iter = t.data.iter();
+        loop {
+            let mut byte: u8 = 0;
+            let mut has_data = false;
+
+            for shift in [0, 2, 4, 6] {
+                if let Some(&x) = iter.next() {
+                    has_data = true;
+                    let v = (x * inv_scale).round().clamp(-1.0, 1.0) as i8;
+                    let bits = (v as i32 & 0x03) as u8;
+                    byte |= bits << shift;
+                }
+            }
+
+            if !has_data {
+                break;
+            }
+            packed.push(byte);
+        }
+
+        tensors_out.push(QuantizedTensor {
+            name: t.name.clone(),
+            shape: t.shape.clone(),
+            scale,
+            scales: Vec::new(),
+            data: packed,
+            indices: Vec::new(),
+        });
+    }
+
+    Ok(ArtifactFile {
+        version: ARTIFACT_VERSION,
+        codec: CODEC_INT2_SYM_V1.to_string(),
         tensors: tensors_out,
     })
 }
@@ -247,6 +566,286 @@ fn decompress_int4_sym(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
     Ok(FloatBundle { tensors: out })
 }
 
+fn decompress_int2_sym(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
+    let mut out = Vec::with_capacity(artifact.tensors.len());
+
+    for t in &artifact.tensors {
+        let expected = expected_len(&t.shape)?;
+        if t.data.is_empty() && expected > 0 {
+            return Err(format!(
+                "Quantized tensor '{}' has no data but expected {} values",
+                t.name, expected
+            ));
+        }
+
+        let mut data: Vec<f32> = Vec::with_capacity(expected);
+        'outer: for &b in &t.data {
+            for shift in [0, 2, 4, 6] {
+                let bits = (b >> shift) & 0x03;
+                // Sign-extend 2-bit two's complement to i8
+                let v = if bits & 0x02 != 0 {
+                    (bits as i8) | !0x03
+                } else {
+                    bits as i8
+                };
+                data.push(v as f32 * t.scale);
+                if data.len() >= expected {
+                    break 'outer;
+                }
+            }
+        }
+
+        if data.len() != expected {
+            return Err(format!(
+                "Quantized tensor '{}' has insufficient 2-bit values (got {}, expected {})",
+                t.name,
+                data.len(),
+                expected
+            ));
+        }
+
+        out.push(FloatTensor {
+            name: t.name.clone(),
+            shape: t.shape.clone(),
+            data,
+        });
+    }
+
+    Ok(FloatBundle { tensors: out })
+}
+
+fn decompress_int4_perchannel(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
+    let mut out = Vec::with_capacity(artifact.tensors.len());
+
+    for t in &artifact.tensors {
+        let expected = expected_len(&t.shape)?;
+        if t.data.is_empty() && expected > 0 {
+            return Err(format!(
+                "Quantized tensor '{}' has no data but expected {} values",
+                t.name, expected
+            ));
+        }
+
+        // Check if this is per-channel or per-tensor (fallback for 1D)
+        let is_perchannel = !t.scales.is_empty() && t.scales.len() > 1;
+
+        if !is_perchannel {
+            // Fall back to per-tensor decompression (for 1D tensors)
+            let scale = if !t.scales.is_empty() {
+                t.scales[0]
+            } else {
+                t.scale
+            };
+
+            let mut data: Vec<f32> = Vec::with_capacity(expected);
+            'outer: for &b in &t.data {
+                let lo = decode_int4_nibble(b & 0x0f);
+                data.push(lo as f32 * scale);
+                if data.len() >= expected {
+                    break 'outer;
+                }
+                let hi = decode_int4_nibble((b >> 4) & 0x0f);
+                data.push(hi as f32 * scale);
+                if data.len() >= expected {
+                    break 'outer;
+                }
+            }
+
+            if data.len() != expected {
+                return Err(format!(
+                    "Quantized tensor '{}' has insufficient 4-bit values (got {}, expected {})",
+                    t.name,
+                    data.len(),
+                    expected
+                ));
+            }
+
+            out.push(FloatTensor {
+                name: t.name.clone(),
+                shape: t.shape.clone(),
+                data,
+            });
+            continue;
+        }
+
+        // Per-channel decompression
+        let out_channels = t.shape[0];
+        let elements_per_channel = expected / out_channels;
+
+        if t.scales.len() != out_channels {
+            return Err(format!(
+                "Tensor '{}' has {} channels but {} scales",
+                t.name,
+                out_channels,
+                t.scales.len()
+            ));
+        }
+
+        let mut data: Vec<f32> = Vec::with_capacity(expected);
+        let mut byte_idx = 0;
+        let mut nibble_offset = 0; // 0 = low nibble, 1 = high nibble
+
+        for ch in 0..out_channels {
+            let scale = t.scales[ch];
+
+            for _ in 0..elements_per_channel {
+                if byte_idx >= t.data.len() {
+                    return Err(format!(
+                        "Tensor '{}' ran out of data during decompression",
+                        t.name
+                    ));
+                }
+
+                let byte = t.data[byte_idx];
+                let nibble = if nibble_offset == 0 {
+                    byte & 0x0f
+                } else {
+                    (byte >> 4) & 0x0f
+                };
+
+                let v = decode_int4_nibble(nibble);
+                data.push(v as f32 * scale);
+
+                nibble_offset += 1;
+                if nibble_offset >= 2 {
+                    nibble_offset = 0;
+                    byte_idx += 1;
+                }
+            }
+        }
+
+        if data.len() != expected {
+            return Err(format!(
+                "Quantized tensor '{}' has insufficient 4-bit values (got {}, expected {})",
+                t.name,
+                data.len(),
+                expected
+            ));
+        }
+
+        out.push(FloatTensor {
+            name: t.name.clone(),
+            shape: t.shape.clone(),
+            data,
+        });
+    }
+
+    Ok(FloatBundle { tensors: out })
+}
+
+fn decompress_int4_perchannel_sparse50(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
+    let mut out = Vec::with_capacity(artifact.tensors.len());
+
+    for t in &artifact.tensors {
+        let expected = expected_len(&t.shape)?;
+
+        // Check if this is sparse (has indices) or dense (fallback for 1D)
+        let is_sparse = !t.indices.is_empty();
+
+        if !is_sparse {
+            // Dense decompression for 1D tensors
+            let scale = if !t.scales.is_empty() {
+                t.scales[0]
+            } else {
+                t.scale
+            };
+
+            let mut data: Vec<f32> = Vec::with_capacity(expected);
+            'outer: for &b in &t.data {
+                let lo = decode_int4_nibble(b & 0x0f);
+                data.push(lo as f32 * scale);
+                if data.len() >= expected {
+                    break 'outer;
+                }
+                let hi = decode_int4_nibble((b >> 4) & 0x0f);
+                data.push(hi as f32 * scale);
+                if data.len() >= expected {
+                    break 'outer;
+                }
+            }
+
+            out.push(FloatTensor {
+                name: t.name.clone(),
+                shape: t.shape.clone(),
+                data,
+            });
+            continue;
+        }
+
+        // Sparse decompression
+        let out_channels = t.shape[0];
+
+        if t.scales.len() != out_channels {
+            return Err(format!(
+                "Tensor '{}' has {} channels but {} scales",
+                t.name,
+                out_channels,
+                t.scales.len()
+            ));
+        }
+
+        // Initialize with zeros
+        let mut data: Vec<f32> = vec![0.0; expected];
+
+        // Decode sparse values
+        let mut idx_pos = 0;
+        let mut byte_idx = 0;
+
+        while idx_pos < t.indices.len() && byte_idx < t.data.len() {
+            let byte = t.data[byte_idx];
+
+            // First nibble (low 4 bits)
+            if idx_pos < t.indices.len() {
+                let global_idx = t.indices[idx_pos] as usize;
+                if global_idx >= expected {
+                    return Err(format!(
+                        "Tensor '{}' has invalid index {} (expected < {})",
+                        t.name, global_idx, expected
+                    ));
+                }
+
+                // Determine which channel this index belongs to
+                let ch = global_idx / (expected / out_channels);
+                let scale = t.scales[ch.min(out_channels - 1)];
+
+                let nibble = byte & 0x0f;
+                let v = decode_int4_nibble(nibble);
+                data[global_idx] = v as f32 * scale;
+                idx_pos += 1;
+            }
+
+            // Second nibble (high 4 bits)
+            if idx_pos < t.indices.len() {
+                let global_idx = t.indices[idx_pos] as usize;
+                if global_idx >= expected {
+                    return Err(format!(
+                        "Tensor '{}' has invalid index {} (expected < {})",
+                        t.name, global_idx, expected
+                    ));
+                }
+
+                let ch = global_idx / (expected / out_channels);
+                let scale = t.scales[ch.min(out_channels - 1)];
+
+                let nibble = (byte >> 4) & 0x0f;
+                let v = decode_int4_nibble(nibble);
+                data[global_idx] = v as f32 * scale;
+                idx_pos += 1;
+            }
+
+            byte_idx += 1;
+        }
+
+        out.push(FloatTensor {
+            name: t.name.clone(),
+            shape: t.shape.clone(),
+            data,
+        });
+    }
+
+    Ok(FloatBundle { tensors: out })
+}
+
 /// Decompress a quantized artifact back into float32 tensors.
 pub fn decompress_bundle(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
     if artifact.version != ARTIFACT_VERSION {
@@ -259,6 +858,9 @@ pub fn decompress_bundle(artifact: &ArtifactFile) -> Result<FloatBundle, String>
     match artifact.codec.as_str() {
         CODEC_INT8_SYM_V1 => decompress_int8_sym(artifact),
         CODEC_INT4_SYM_V1 => decompress_int4_sym(artifact),
+        CODEC_INT4_PERCHANNEL_V1 => decompress_int4_perchannel(artifact),
+        CODEC_INT4_PERCHANNEL_SPARSE50_V1 => decompress_int4_perchannel_sparse50(artifact),
+        CODEC_INT2_SYM_V1 => decompress_int2_sym(artifact),
         other => Err(format!("Unsupported codec '{}'", other)),
     }
 }
