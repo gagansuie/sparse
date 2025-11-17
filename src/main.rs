@@ -469,7 +469,17 @@ fn runeval_cmd(model: &str, samples: usize) -> Result<()> {
 
     // Run evaluation script
     println!("[tenpak] Running evaluation...");
-    let status = Command::new(&python)
+
+    // Check if venv was created by download script
+    let venv_python = work_dir.join(".tenpak-eval-venv/bin/python");
+    let python_to_use = if venv_python.exists() {
+        println!("[tenpak] Using venv Python: {}", venv_python.display());
+        venv_python.to_string_lossy().to_string()
+    } else {
+        python.clone()
+    };
+
+    let status = Command::new(&python_to_use)
         .arg(&eval_script_path)
         .current_dir(&work_dir)
         .env("TENPAK_EVAL_MODEL", model)
