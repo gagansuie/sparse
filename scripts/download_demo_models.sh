@@ -42,7 +42,16 @@ if python3 -c "import torch, transformers" 2>/dev/null; then
   python3 -m pip install --quiet datasets accelerate huggingface_hub 2>/dev/null || true
 else
   echo "[10pak] Creating virtualenv at ${VENV_DIR} (if not exists)"
-  python3 -m venv "${VENV_DIR}"
+  if ! python3 -m venv "${VENV_DIR}" 2>/dev/null; then
+    echo "" >&2
+    echo "ERROR: Failed to create Python virtual environment" >&2
+    echo "" >&2
+    echo "Please install dependencies:" >&2
+    echo "  sudo apt update && sudo apt install -y python3-venv python3-pip" >&2
+    echo "  pip3 install torch transformers datasets accelerate huggingface_hub" >&2
+    echo "" >&2
+    exit 1
+  fi
   # shellcheck disable=SC1090
   source "${VENV_DIR}/bin/activate"
   PYTHON_CMD="python"
@@ -56,13 +65,17 @@ fi
 
 echo "[10pak] Downloading models: ${MODELS_TO_DOWNLOAD[*]}"
 
+# Pass the root directory to Python via environment variable
+export TENPAK_ROOT_DIR="${ROOT_DIR}"
+
 ${PYTHON_CMD} << 'EOF'
 import os
 from pathlib import Path
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-root_dir = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Use environment variable for root directory
+root_dir = Path(os.environ.get("TENPAK_ROOT_DIR", os.getcwd()))
 models_dir = root_dir / "models"
 models_dir.mkdir(parents=True, exist_ok=True)
 
