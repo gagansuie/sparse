@@ -1,4 +1,5 @@
 use std::fs;
+use std::process::Command;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -89,6 +90,8 @@ enum Commands {
         #[arg(short, long)]
         output: String,
     },
+    #[command(name = "runeval")]
+    RunEval,
 }
 
 fn main() -> Result<()> {
@@ -119,6 +122,7 @@ fn main() -> Result<()> {
             delta,
             output,
         } => materialize_cmd(&base, &delta, &output)?,
+        Commands::RunEval => run_eval_cmd()?,
     }
 
     Ok(())
@@ -396,6 +400,97 @@ fn delta_cmd(base: &str, variant: &str, output: &str, epsilon: f32) -> Result<()
         "Delta artifact written to {} (base: {}, variant: {}, epsilon: {})",
         output, base, variant, epsilon
     );
+
+    Ok(())
+}
+
+fn run_eval_cmd() -> Result<()> {
+    let exe = std::env::current_exe().context("Failed to get path to current executable")?;
+    let exe_dir = exe
+        .parent()
+        .ok_or_else(|| anyhow::Error::msg("Failed to determine executable directory"))?;
+
+    let mut candidates = Vec::new();
+    candidates.push(
+        exe_dir
+            .join("scripts")
+            .join("run_eval_and_update_readme.py"),
+    );
+    candidates.push(exe_dir.join("run_eval_and_update_readme.py"));
+
+    if let Some(parent) = exe_dir.parent() {
+        if let Some(root) = parent.parent() {
+            candidates.push(root.join("scripts").join("run_eval_and_update_readme.py"));
+        }
+    }
+
+    let eval_script = candidates
+        .into_iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| anyhow::Error::msg("Eval script not found next to tenpak binary"))?;
+
+    let script_dir = eval_script
+        .parent()
+        .ok_or_else(|| anyhow::Error::msg("Eval script has no parent directory"))?;
+    let root_dir = script_dir.parent().unwrap_or(script_dir);
+
+    let readme_out = std::env::current_dir()
+        .context("Failed to determine current directory")?
+        .join("README.md");
+
+    let mut python_candidates: Vec<String> = Vec::new();
+    if let Ok(v) = std::env::var("TENPAK_PYTHON") {
+        if !v.is_empty() {
+            python_candidates.push(v);
+        }
+    }
+    python_candidates.push("python".to_string());
+    python_candidates.push("python3".to_string());
+
+    let mut chosen_python: Option<String> = None;
+    for cand in python_candidates {
+        match Command::new(&cand).arg("--version").status() {
+            Ok(status) if status.success() => {
+                chosen_python = Some(cand);
+                break;
+            }
+            Ok(_) => continue,
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    continue;
+                }
+            }
+        }
+    }
+
+    let python = match chosen_python {
+        Some(p) => p,
+        None => {
+            return Err(anyhow::Error::msg(
+                "No working Python interpreter found. Install Python and ensure it is on PATH, or run scripts/install_python.sh if available.",
+            ));
+        }
+    };
+
+    let status = Command::new(&python)
+        .arg(&eval_script)
+        .env("TENPAK_BIN", exe.to_string_lossy().to_string())
+        .env(
+            "TENPAK_README_PATH",
+            readme_out.to_string_lossy().to_string(),
+        )
+        .current_dir(&root_dir)
+        .status()
+        .with_context(|| format!("Failed to run eval script via {}", python))?;
+
+    if !status.success() {
+        return Err(anyhow::Error::msg(format!(
+            "Eval script exited with status {}",
+            status
+        )));
+    }
+
+    println!("Eval completed. README written to {}", readme_out.display());
 
     Ok(())
 }

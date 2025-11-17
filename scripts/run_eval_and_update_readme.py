@@ -13,8 +13,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = ROOT / "models"
-TENPAK_BIN = ROOT / "target" / "release" / "tenpak"
-README_PATH = ROOT / "README.md"
+TENPAK_BIN = Path(
+    os.environ.get("TENPAK_BIN", str(ROOT / "target" / "release" / "tenpak"))
+)
+README_PATH = Path(os.environ.get("TENPAK_README_PATH", str(ROOT / "README.md")))
 
 MODEL_NAME = os.environ.get("TENPAK_EVAL_MODEL", "gpt2")
 SAFE_NAME = MODEL_NAME.replace("/", "_")
