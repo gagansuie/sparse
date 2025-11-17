@@ -385,51 +385,38 @@ def main():
     print(f"  Full int4 FT  : {total_full_int4_gb:.3f} GB (base FP + FT int4)")
     print(f"  Base+Delta    : {total_base_delta_gb:.3f} GB (base int4 + delta)")
 
-    # Update README tables
-    readme = README_PATH.read_text()
-
-    old_codec_block = (
-        "| FP baseline            |                   | 1.0×              |                |              |               |           |\n"
-        "| tenpak int8            |                   |                   |                |              |               |           |\n"
-        "| tenpak int4 (tensor)   |                   |                   |                |              |               |           |\n"
-        "| tenpak int4 (channel)  |                   |                   |                |              |               |           |\n"
-        "| tenpak int4 (sparse)   |                   |                   |                |              |               |           |\n"
-        "| tenpak int2            |                   |                   |                |              |               |           |"
+    # Build Markdown snippets for results (without editing README)
+    codec_table = (
+        "| Variant                     | On-disk size (GB) | Compression vs FP | Perplexity | Δ Perplexity |\n"
+        "|-----------------------------|-------------------|-------------------|------------|--------------|\n"
+        f"| FP baseline                 | {size_fp_gb:.3f} | 1.0×              | {ppl_fp:.3f} | 0.0          |\n"
+        f"| tenpak int8                 | {size_int8_gb:.3f} | {compression_int8:.2f}× | {ppl_int8:.3f} | {delta_ppl_int8:+.3f} |\n"
+        f"| tenpak int4 (tensor)        | {size_int4_gb:.3f} | {compression_int4:.2f}× | {ppl_int4:.3f} | {delta_ppl_int4:+.3f} |\n"
+        f"| tenpak int4 (channel)       | {size_int4_perchannel_gb:.3f} | {compression_int4_perchannel:.2f}× | {ppl_int4_perchannel:.3f} | {delta_ppl_int4_perchannel:+.3f} |\n"
+        f"| tenpak int4 (sparse 50%)    | {size_int4_sparse_gb:.3f} | {compression_int4_sparse:.2f}× | {ppl_int4_sparse:.3f} | {delta_ppl_int4_sparse:+.3f} |\n"
+        f"| tenpak int2                 | {size_int2_gb:.3f} | {compression_int2:.2f}× | {ppl_int2:.3f} | {delta_ppl_int2:+.3f} |\n"
     )
 
-    new_codec_block = (
-        f"| FP baseline            | {size_fp_gb:.3f} | 1.0×              | {ppl_fp:.3f} | 0.0          | N/A           | N/A       |\n"
-        f"| tenpak int8            | {size_int8_gb:.3f} | {compression_int8:.2f}× | {ppl_int8:.3f} | {delta_ppl_int8:+.3f} | N/A           | N/A       |\n"
-        f"| tenpak int4 (tensor)   | {size_int4_gb:.3f} | {compression_int4:.2f}× | {ppl_int4:.3f} | {delta_ppl_int4:+.3f} | N/A           | N/A       |\n"
-        f"| tenpak int4 (channel)  | {size_int4_perchannel_gb:.3f} | {compression_int4_perchannel:.2f}× | {ppl_int4_perchannel:.3f} | {delta_ppl_int4_perchannel:+.3f} | N/A           | N/A       |\n"
-        f"| tenpak int4 (sparse)   | {size_int4_sparse_gb:.3f} | {compression_int4_sparse:.2f}× | {ppl_int4_sparse:.3f} | {delta_ppl_int4_sparse:+.3f} | N/A           | N/A       |\n"
-        f"| tenpak int2            | {size_int2_gb:.3f} | {compression_int2:.2f}× | {ppl_int2:.3f} | {delta_ppl_int2:+.3f} | N/A           | N/A       |"
+    storage_table = (
+        "| Variant                     | Files stored                         | Total on-disk size (GB) | Notes                                      |\n"
+        "|-----------------------------|--------------------------------------|--------------------------|--------------------------------------------|\n"
+        f"| Full FP fine-tune           | `base_fp.pt` + `ft_fp.pt`           | {total_full_fp_gb:.3f}   | Two full-precision checkpoints.           |\n"
+        f"| Full tenpak fine-tune       | `base_fp.pt` + `ft_int4.tenpak`    | {total_full_int4_gb:.3f} | Compress the fine-tune only.              |\n"
+        f"| tenpak base + delta (A)     | `base_int4.tenpak` + `ft_delta`    | {total_base_delta_gb:.3f}| Compressed base + small variant delta.    |\n"
     )
 
-    readme = readme.replace(old_codec_block, new_codec_block)
-
-    old_delta_block = (
-        "| Full FP fine-tune           | `base_fp.pt` + `ft_fp.pt`           | `S_base_fp + S_ft_fp`          | Two full-precision checkpoints.           |\n"
-        "| Full tenpak fine-tune        | `base_fp.pt` + `ft_int4.tenpak`  | `S_base_fp + S_ft_int4`        | Compress the fine-tune only.              |\n"
-        "| tenpak base + delta (A)      | `base_int4.tenpak` + `ft_delta`  | `S_base_int4 + S_delta`        | Compressed base + small variant delta.    |"
-    )
-
-    new_delta_block = (
-        f"| Full FP fine-tune           | `base_fp.pt` + `ft_fp.pt`           | {total_full_fp_gb:.3f}         | Two full-precision checkpoints.           |\n"
-        f"| Full tenpak fine-tune        | `base_fp.pt` + `ft_int4.tenpak`  | {total_full_int4_gb:.3f}       | Compress the fine-tune only.              |\n"
-        f"| tenpak base + delta (A)      | `base_int4.tenpak` + `ft_delta`  | {total_base_delta_gb:.3f}      | Compressed base + small variant delta.    |"
-    )
-
-    readme = readme.replace(old_delta_block, new_delta_block)
-
-    # Print the updated README to stdout instead of writing to file
+    # Print just the results block for manual copy/paste
     print("\n" + "="*80)
-    print("[tenpak] UPDATED README CONTENT - Copy and paste this into your README.md:")
+    print("[tenpak] EVALUATION RESULTS (Markdown snippet)")
     print("="*80 + "\n")
-    print(readme)
+    print(f"Model: {MODEL_NAME}")
+    print("\n### Codec vs. quality\n")
+    print(codec_table)
+    print("\n### Base + delta fine-tune storage\n")
+    print(storage_table)
     print("\n" + "="*80)
     print(f"[tenpak] Evaluation completed for model {MODEL_NAME}.")
-    print("[tenpak] Copy the content above and paste it into your README.md file.")
+    print("[tenpak] Copy the tables above into your README.md when you're happy with the results.")
     print("="*80)
 
 
