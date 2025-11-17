@@ -287,11 +287,35 @@ simple, local operation at load time.
 
 ## Run the full evaluation pipeline
 
-After setting up the project, you can run the end-to-end demo (download models,
-compute metrics, and update the README) with:
+### Using the CLI (recommended)
+
+The easiest way to run the full evaluation pipeline is using the built-in `run-eval` command:
 
 ```bash
-cd 10pak
+# Build the CLI
+cargo build --release
+
+# Run evaluation with default settings (gpt2, 128 samples)
+./target/release/tenpak run-eval
+
+# Or customize the model and sample count
+./target/release/tenpak run-eval --model gpt2 --samples 256
+```
+
+The `run-eval` command will:
+- Automatically download the specified model
+- Install Python dependencies (torch, transformers, datasets)
+- Compress the model with int8 and int4 codecs
+- Compute perplexity metrics
+- Create simulated fine-tune and delta artifacts
+- Update the README with results
+
+### Using the shell script (alternative)
+
+You can also run the evaluation using the orchestration script:
+
+```bash
+cd tenpak
 
 # Make orchestration script executable
 chmod +x scripts/run_full_eval.sh
@@ -301,6 +325,24 @@ export TENPAK_EVAL_MODEL="gpt2"
 
 # Run the full pipeline
 ./scripts/run_full_eval.sh
+```
+
+### Deployment to EC2
+
+To deploy tenpak to an EC2 instance:
+
+```bash
+# Package the binary
+./scripts/package_for_deploy.sh
+
+# Copy to EC2
+scp tenpak.tar.gz ubuntu@your-ec2-instance:/mnt/
+
+# On EC2, extract and run
+ssh ubuntu@your-ec2-instance
+cd /mnt && tar -xzf tenpak.tar.gz
+sudo ln -s /mnt/tenpak/bin/tenpak /usr/local/bin/tenpak
+tenpak run-eval
 ```
 
 ## Results (fill in with your own evals)
