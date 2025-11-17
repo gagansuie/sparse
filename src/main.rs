@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::process::Command;
 
@@ -91,15 +90,8 @@ enum Commands {
         #[arg(short, long)]
         output: String,
     },
-    /// Run the full evaluation pipeline and update README with results.
-    RunEval {
-        /// Model to evaluate (default: gpt2)
-        #[arg(long, default_value = "gpt2")]
-        model: String,
-        /// Number of evaluation samples (default: 128)
-        #[arg(long, default_value_t = 128)]
-        samples: usize,
-    },
+    #[command(name = "runeval")]
+    RunEval,
 }
 
 fn main() -> Result<()> {
@@ -130,7 +122,7 @@ fn main() -> Result<()> {
             delta,
             output,
         } => materialize_cmd(&base, &delta, &output)?,
-        Commands::RunEval { model, samples } => runeval_cmd(&model, samples)?,
+        Commands::RunEval => run_eval_cmd()?,
     }
 
     Ok(())
@@ -412,6 +404,97 @@ fn delta_cmd(base: &str, variant: &str, output: &str, epsilon: f32) -> Result<()
     Ok(())
 }
 
+fn run_eval_cmd() -> Result<()> {
+    let exe = std::env::current_exe().context("Failed to get path to current executable")?;
+    let exe_dir = exe
+        .parent()
+        .ok_or_else(|| anyhow::Error::msg("Failed to determine executable directory"))?;
+
+    let mut candidates = Vec::new();
+    candidates.push(
+        exe_dir
+            .join("scripts")
+            .join("run_eval_and_update_readme.py"),
+    );
+    candidates.push(exe_dir.join("run_eval_and_update_readme.py"));
+
+    if let Some(parent) = exe_dir.parent() {
+        if let Some(root) = parent.parent() {
+            candidates.push(root.join("scripts").join("run_eval_and_update_readme.py"));
+        }
+    }
+
+    let eval_script = candidates
+        .into_iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| anyhow::Error::msg("Eval script not found next to tenpak binary"))?;
+
+    let script_dir = eval_script
+        .parent()
+        .ok_or_else(|| anyhow::Error::msg("Eval script has no parent directory"))?;
+    let root_dir = script_dir.parent().unwrap_or(script_dir);
+
+    let readme_out = std::env::current_dir()
+        .context("Failed to determine current directory")?
+        .join("README.md");
+
+    let mut python_candidates: Vec<String> = Vec::new();
+    if let Ok(v) = std::env::var("TENPAK_PYTHON") {
+        if !v.is_empty() {
+            python_candidates.push(v);
+        }
+    }
+    python_candidates.push("python".to_string());
+    python_candidates.push("python3".to_string());
+
+    let mut chosen_python: Option<String> = None;
+    for cand in python_candidates {
+        match Command::new(&cand).arg("--version").status() {
+            Ok(status) if status.success() => {
+                chosen_python = Some(cand);
+                break;
+            }
+            Ok(_) => continue,
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    continue;
+                }
+            }
+        }
+    }
+
+    let python = match chosen_python {
+        Some(p) => p,
+        None => {
+            return Err(anyhow::Error::msg(
+                "No working Python interpreter found. Install Python and ensure it is on PATH, or run scripts/install_python.sh if available.",
+            ));
+        }
+    };
+
+    let status = Command::new(&python)
+        .arg(&eval_script)
+        .env("TENPAK_BIN", exe.to_string_lossy().to_string())
+        .env(
+            "TENPAK_README_PATH",
+            readme_out.to_string_lossy().to_string(),
+        )
+        .current_dir(&root_dir)
+        .status()
+        .with_context(|| format!("Failed to run eval script via {}", python))?;
+
+    if !status.success() {
+        return Err(anyhow::Error::msg(format!(
+            "Eval script exited with status {}",
+            status
+        )));
+    }
+
+    println!("Eval completed. README written to {}", readme_out.display());
+
+    Ok(())
+}
+
 fn materialize_cmd(base: &str, delta: &str, output: &str) -> Result<()> {
     let base_bytes =
         fs::read(base).with_context(|| format!("Failed to read base artifact file: {}", base))?;
@@ -435,111 +518,6 @@ fn materialize_cmd(base: &str, delta: &str, output: &str) -> Result<()> {
         "Materialized artifact written to {} (base: {}, delta: {})",
         output, base, delta
     );
-
-    Ok(())
-}
-
-fn runeval_cmd(model: &str, samples: usize) -> Result<()> {
-    const EVAL_SCRIPT: &str = include_str!("../scripts/run_eval_and_update_readme.py");
-
-    println!("[tenpak] Starting evaluation pipeline for model: {}", model);
-    println!("[tenpak] Samples: {}", samples);
-
-    // Get current directory
-    let current_dir = env::current_dir().context("Failed to get current directory")?;
-    println!("[tenpak] Working directory: {}", current_dir.display());
-
-    // Find tenpak binary path
-    let tenpak_bin = env::current_exe().context("Failed to get tenpak binary path")?;
-    let tenpak_dir = tenpak_bin
-        .parent()
-        .context("Failed to get tenpak binary directory")?;
-
-    // Check if we're in a proper tenpak directory structure
-    // Look for the binary either in target/release or in a bin/ subdirectory
-    let root_dir =
-        if tenpak_dir.ends_with("target/release") || tenpak_dir.ends_with("target\\release") {
-            tenpak_dir
-                .parent()
-                .and_then(|p| p.parent())
-                .context("Failed to find tenpak root directory")?
-        } else if tenpak_dir.ends_with("bin") {
-            tenpak_dir
-                .parent()
-                .context("Failed to find tenpak root directory")?
-        } else {
-            // Assume current directory is the root
-            &current_dir
-        };
-
-    println!("[tenpak] Root directory: {}", root_dir.display());
-
-    // Create necessary directories
-    let models_dir = root_dir.join("models");
-    let tmp_dir = root_dir.join("tmp_eval");
-    fs::create_dir_all(&models_dir).context("Failed to create models directory")?;
-    fs::create_dir_all(&tmp_dir).context("Failed to create tmp_eval directory")?;
-
-    // Write the eval script to a temporary location
-    let script_path = tmp_dir.join("run_eval.py");
-    fs::write(&script_path, EVAL_SCRIPT).context("Failed to write eval script")?;
-
-    // Set environment variables
-    env::set_var("TENPAK_EVAL_MODEL", model);
-    env::set_var("TENPAK_EVAL_SAMPLES", samples.to_string());
-
-    // Check for Python
-    let python_cmd = if Command::new("python3").arg("--version").output().is_ok() {
-        "python3"
-    } else if Command::new("python").arg("--version").output().is_ok() {
-        "python"
-    } else {
-        return Err(anyhow::Error::msg(
-            "Python not found. Please install Python 3 to run evaluations.",
-        ));
-    };
-
-    println!("[tenpak] Using Python: {}", python_cmd);
-    println!("[tenpak] Checking/installing Python dependencies...");
-
-    // Try to install dependencies
-    let pip_install = Command::new(python_cmd)
-        .args(&[
-            "-m",
-            "pip",
-            "install",
-            "--quiet",
-            "torch",
-            "transformers",
-            "datasets",
-        ])
-        .current_dir(root_dir)
-        .status();
-
-    if pip_install.is_err() {
-        println!("[tenpak] Warning: Could not install dependencies automatically.");
-        println!("[tenpak] Please ensure torch, transformers, and datasets are installed.");
-    }
-
-    // Run the evaluation script
-    println!("[tenpak] Running evaluation script...");
-    let status = Command::new(python_cmd)
-        .arg(&script_path)
-        .current_dir(root_dir)
-        .env("TENPAK_EVAL_MODEL", model)
-        .env("TENPAK_EVAL_SAMPLES", samples.to_string())
-        .status()
-        .context("Failed to execute evaluation script")?;
-
-    if !status.success() {
-        return Err(anyhow::Error::msg(format!(
-            "Evaluation script failed with exit code: {:?}",
-            status.code()
-        )));
-    }
-
-    println!("[tenpak] Evaluation completed successfully!");
-    println!("[tenpak] README.md has been updated with results.");
 
     Ok(())
 }
