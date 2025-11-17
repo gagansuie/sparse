@@ -6,22 +6,23 @@ cargo build --release
 
 echo "[package] Creating package structure..."
 rm -rf dist
-mkdir -p dist/tenpak/bin
-mkdir -p dist/tenpak/lib
+mkdir -p dist/bin
+mkdir -p dist/lib
 
 echo "[package] Copying binary (scripts are embedded)..."
-cp target/release/tenpak dist/tenpak/bin/
-chmod +x dist/tenpak/bin/tenpak
+cp target/release/tenpak dist/bin/
+chmod +x dist/bin/tenpak
+
+echo "[package] Copying install script..."
+cp scripts/install_release.sh dist/install.sh
+chmod +x dist/install.sh
 
 echo "[package] Copying documentation..."
-cp README.md dist/tenpak/
+cp README.md dist/
+[ -f LICENSE ] && cp LICENSE dist/ || true
 
 echo "[package] Creating tarball..."
-cd dist
-tar -czf tenpak.tar.gz tenpak/
-mv tenpak.tar.gz ../
-
-cd ..
+tar -czf tenpak.tar.gz -C dist .
 echo "[package] ✓ Package created: tenpak.tar.gz"
 echo "[package] Package contents:"
 tar -tzf tenpak.tar.gz

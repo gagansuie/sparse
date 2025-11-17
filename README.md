@@ -332,17 +332,21 @@ export TENPAK_EVAL_MODEL="gpt2"
 #### Option 1: Using packaged binary (from CI/CD)
 
 ```bash
-# Copy tarball to EC2
-scp -i key.pem tenpak.tar.gz ubuntu@your-ec2-instance:~/
+# Download release from GitHub
+wget https://github.com/youruser/tenpak/releases/download/v0.1.0/tenpak-0.1.0-x86_64-unknown-linux-gnu.tar.gz
 
-# SSH to EC2 and extract
-ssh -i key.pem ubuntu@your-ec2-instance
-cd ~
-tar -xzf tenpak.tar.gz
+# Extract to a directory
+mkdir tenpak && cd tenpak
+tar -xzf ../tenpak-*.tar.gz
+
+# Install (copies binary to /usr/local/bin)
+sudo ./install.sh
+
+# Or install to custom location
+./install.sh --prefix ~/.local
 
 # Run evaluation (scripts are embedded in the binary)
-cd tenpak
-./bin/tenpak runeval
+tenpak runeval
 
 # The updated README will be printed - copy and paste it back
 ```
@@ -350,12 +354,9 @@ cd tenpak
 #### Option 2: From source
 
 ```bash
-# Copy the entire project to EC2
-scp -r tenpak ubuntu@your-ec2-instance:/home/ubuntu/
-
-# SSH to EC2 and run
-ssh ubuntu@your-ec2-instance
-cd /home/ubuntu/tenpak
+# Clone or copy the project
+git clone https://github.com/youruser/tenpak.git
+cd tenpak
 
 # Build and run
 cargo build --release
