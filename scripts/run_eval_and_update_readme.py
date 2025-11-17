@@ -317,8 +317,15 @@ def main():
 
     readme = readme.replace(old_delta_block, new_delta_block)
 
-    README_PATH.write_text(readme)
-    print(f"[tenpak] README updated with results for model {MODEL_NAME}.")
+    # Print the updated README to stdout instead of writing to file
+    print("\n" + "="*80)
+    print("[tenpak] UPDATED README CONTENT - Copy and paste this into your README.md:")
+    print("="*80 + "\n")
+    print(readme)
+    print("\n" + "="*80)
+    print(f"[tenpak] Evaluation completed for model {MODEL_NAME}.")
+    print("[tenpak] Copy the content above and paste it into your README.md file.")
+    print("="*80)
 
 
 if __name__ == "__main__":

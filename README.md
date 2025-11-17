@@ -287,32 +287,8 @@ simple, local operation at load time.
 
 ## Run the full evaluation pipeline
 
-### Using the CLI (recommended)
-
-The easiest way to run the full evaluation pipeline is using the built-in `runeval` command:
-
-```bash
-# Build the CLI
-cargo build --release
-
-# Run evaluation with default settings (gpt2, 128 samples)
-./target/release/tenpak runeval
-
-# Or customize the model and sample count using environment variables
-TENPAK_EVAL_MODEL=gpt2 TENPAK_EVAL_SAMPLES=256 ./target/release/tenpak runeval
-```
-
-The `runeval` command will:
-- Automatically download the specified model (via TENPAK_EVAL_MODEL env var)
-- Run the Python evaluation script
-- Compress the model with int8 and int4 codecs
-- Compute perplexity metrics
-- Create simulated fine-tune and delta artifacts
-- Update the README in the current directory with results
-
-### Using the shell script (alternative)
-
-You can also run the evaluation using the orchestration script:
+After setting up the project, you can run the end-to-end demo (download models,
+compute metrics, and update the README) with:
 
 ```bash
 cd tenpak
@@ -327,24 +303,19 @@ export TENPAK_EVAL_MODEL="gpt2"
 ./scripts/run_full_eval.sh
 ```
 
-### Deployment to EC2
+### Running on EC2
 
-To deploy tenpak to an EC2 instance:
+To run the evaluation on an EC2 instance:
 
 ```bash
-# Copy the tarball to EC2 (built by CI/CD)
-scp tenpak.tar.gz ubuntu@your-ec2-instance:/mnt/
+# Copy the entire project to EC2
+scp -r tenpak ubuntu@your-ec2-instance:/home/ubuntu/
 
-# On EC2, extract and run
+# SSH to EC2 and run
 ssh ubuntu@your-ec2-instance
-cd /mnt && tar -xzf tenpak.tar.gz
-sudo ln -s /mnt/tenpak/bin/tenpak /usr/local/bin/tenpak
-
-# Run evaluation
-tenpak runeval
-
-# Or with custom settings
-TENPAK_EVAL_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0 tenpak runeval
+cd /home/ubuntu/tenpak
+chmod +x scripts/run_full_eval.sh
+./scripts/run_full_eval.sh
 ```
 
 ## Results (fill in with your own evals)
