@@ -17,9 +17,28 @@ if [[ ! -x "${ROOT_DIR}/scripts/download_demo_models.sh" ]]; then
 fi
 "${ROOT_DIR}/scripts/download_demo_models.sh"
 
-# Step 2: build 10pak binary in release mode
-echo "[tenpak] Building tenpak (release)"
-cargo build --release
+# Step 2: ensure we have a tenpak binary (build if cargo is available, otherwise
+# reuse the packaged binary from the release tarball)
+TARGET_BUILD_BIN="${ROOT_DIR}/target/release/tenpak"
+PACKAGED_BIN="${ROOT_DIR}/bin/tenpak"
+
+if command -v cargo >/dev/null 2>&1; then
+  echo "[tenpak] Building tenpak (release)"
+  cargo build --release
+  TENPAK_BIN_PATH="${TARGET_BUILD_BIN}"
+else
+  echo "[tenpak] Cargo not found; reusing packaged binary"
+  TENPAK_BIN_PATH="${PACKAGED_BIN}"
+fi
+
+if [[ ! -x "${TENPAK_BIN_PATH}" ]]; then
+  echo "[tenpak] Error: tenpak binary not available at ${TENPAK_BIN_PATH}" >&2
+  echo "         Install Rust/cargo to build from source OR ensure bin/tenpak is present." >&2
+  exit 1
+fi
+
+export TENPAK_BIN="${TENPAK_BIN_PATH}"
+echo "[tenpak] Using CLI binary: ${TENPAK_BIN}"
 
 # Step 3: activate the eval virtualenv and run the Python eval script
 VENV_DIR="${ROOT_DIR}/.tenpak-eval-venv"
