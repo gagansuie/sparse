@@ -16,7 +16,6 @@ MODELS_DIR = ROOT / "models"
 TENPAK_BIN = Path(
     os.environ.get("TENPAK_BIN", str(ROOT / "target" / "release" / "tenpak"))
 )
-README_PATH = Path(os.environ.get("TENPAK_README_PATH", str(ROOT / "README.md")))
 
 MODEL_NAME = os.environ.get("TENPAK_EVAL_MODEL", "gpt2")
 SAFE_NAME = MODEL_NAME.replace("/", "_")
@@ -429,7 +428,7 @@ def main():
     print(storage_table)
     print("\n" + "="*80)
     print(f"[tenpak] Evaluation completed for model {MODEL_NAME}.")
-    print("[tenpak] Copy the tables above into your README.md when you're happy with the results.")
+    print("[tenpak] Copy/paste the snippet above wherever you track results (README, Notion, etc.).")
     print("="*80)
 
 

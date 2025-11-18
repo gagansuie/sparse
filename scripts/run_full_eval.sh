@@ -26,7 +26,7 @@ VENV_DIR="${ROOT_DIR}/.tenpak-eval-venv"
 # shellcheck disable=SC1090
 source "${VENV_DIR}/bin/activate"
 
-chmod +x "${ROOT_DIR}/scripts/run_eval_and_update_readme.py"
-python "${ROOT_DIR}/scripts/run_eval_and_update_readme.py"
+chmod +x "${ROOT_DIR}/scripts/run_eval.py"
+python "${ROOT_DIR}/scripts/run_eval.py"
 
 echo "[tenpak] Full eval completed. README has been updated with results."

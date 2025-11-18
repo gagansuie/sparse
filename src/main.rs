@@ -9,7 +9,7 @@ use tenpak::{
 };
 
 const EMBEDDED_DOWNLOAD_SCRIPT: &str = include_str!("../scripts/download_demo_models.sh");
-const EMBEDDED_EVAL_SCRIPT: &str = include_str!("../scripts/run_eval_and_update_readme.py");
+const EMBEDDED_EVAL_SCRIPT: &str = include_str!("../scripts/run_eval.py");
 
 /// 10pak CLI: compress and decompress simple tensor bundles.
 #[derive(Parser, Debug)]
@@ -434,7 +434,7 @@ fn runeval_cmd(model: &str, samples: usize) -> Result<()> {
     let mut temp_dir: Option<std::path::PathBuf> = None;
     let (download_script_path, eval_script_path) = if scripts_dir.exists() {
         let download_path = scripts_dir.join("download_demo_models.sh");
-        let eval_path = scripts_dir.join("run_eval_and_update_readme.py");
+        let eval_path = scripts_dir.join("run_eval.py");
         if download_path.exists() && eval_path.exists() {
             (download_path, eval_path)
         } else {
@@ -448,7 +448,7 @@ fn runeval_cmd(model: &str, samples: usize) -> Result<()> {
             .context("Failed to create temporary directory for embedded scripts")?;
 
         let download_path = tmp.join("download_demo_models.sh");
-        let eval_path = tmp.join("run_eval_and_update_readme.py");
+        let eval_path = tmp.join("run_eval.py");
         std::fs::write(&download_path, EMBEDDED_DOWNLOAD_SCRIPT)
             .context("Failed to write embedded download script")?;
         std::fs::write(&eval_path, EMBEDDED_EVAL_SCRIPT)

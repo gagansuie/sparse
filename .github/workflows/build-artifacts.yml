@@ -39,7 +39,7 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-  build-linux:
+  build:
     name: Build Linux artifacts
     needs: determine-release
     runs-on: ubuntu-latest
