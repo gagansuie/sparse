@@ -683,35 +683,47 @@ fn decompress_int4_perchannel(artifact: &ArtifactFile) -> Result<FloatBundle, St
 
         let mut data: Vec<f32> = Vec::with_capacity(expected);
         let mut byte_idx = 0;
-        let mut nibble_offset = 0; // 0 = low nibble, 1 = high nibble
+        let bytes_per_channel = (elements_per_channel + 1) / 2;
 
         for ch in 0..out_channels {
             let scale = t.scales[ch];
 
-            for _ in 0..elements_per_channel {
-                if byte_idx >= t.data.len() {
-                    return Err(format!(
-                        "Tensor '{}' ran out of data during decompression",
-                        t.name
-                    ));
+            if byte_idx + bytes_per_channel > t.data.len() {
+                return Err(format!(
+                    "Tensor '{}' has insufficient data for channel {}",
+                    t.name, ch
+                ));
+            }
+
+            let channel_bytes = &t.data[byte_idx..byte_idx + bytes_per_channel];
+            let mut produced = 0;
+            for &b in channel_bytes {
+                let lo = decode_int4_nibble(b & 0x0f);
+                data.push(lo as f32 * scale);
+                produced += 1;
+                if produced >= elements_per_channel {
+                    break;
                 }
 
-                let byte = t.data[byte_idx];
-                let nibble = if nibble_offset == 0 {
-                    byte & 0x0f
-                } else {
-                    (byte >> 4) & 0x0f
-                };
-
-                let v = decode_int4_nibble(nibble);
-                data.push(v as f32 * scale);
-
-                nibble_offset += 1;
-                if nibble_offset >= 2 {
-                    nibble_offset = 0;
-                    byte_idx += 1;
+                let hi = decode_int4_nibble((b >> 4) & 0x0f);
+                data.push(hi as f32 * scale);
+                produced += 1;
+                if produced >= elements_per_channel {
+                    break;
                 }
             }
+
+            if produced != elements_per_channel {
+                return Err(format!(
+                    "Tensor '{}' has insufficient 4-bit values for channel {} (got {}, expected {})",
+                    t.name,
+                    ch,
+                    produced,
+                    elements_per_channel
+                ));
+            }
+
+            byte_idx += bytes_per_channel;
         }
 
         if data.len() != expected {
