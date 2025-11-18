@@ -313,3 +313,18 @@ _Model: gpt2_
 
 For a fleet of many fine-tunes, you can extend this to show how the base+delta
 layout scales versus storing full checkpoints per variant.
+
+### Reference AWQ baselines (WikiText-2)
+
+To contextualize tenpak’s goals (<1% accuracy delta while beating AWQ on compression), we track published AWQ perplexities alongside FP16 and GPTQ baselines.@mit-han-lab/llm-awq
+
+| Model Family | Model Size | FP16 PPL | AWQ 4-bit (W4A16, g128) | GPTQ 4-bit (g128) |
+|--------------|------------|----------|--------------------------|-------------------|
+| OPT          | 1.3B       | 14.62    | 15.22                   | 15.47             |
+| OPT          | 2.7B       | 12.47    | 13.19                   | 12.87             |
+| OPT          | 6.7B       | 10.86    | 11.23                   | 11.39             |
+| LLaMA        | 7B         | 5.86     | 5.78                    | 6.22              |
+| LLaMA 2      | 7B         | 5.12     | 5.60                    | 5.69              |
+| LLaMA 2      | 13B        | 4.67     | 4.97                    | 4.98              |
+
+Goal: ensure tenpak int8/int4 codecs reach <1% PPL delta relative to FP16 while matching or beating AWQ’s compression ratio.

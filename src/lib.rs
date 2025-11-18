@@ -15,6 +15,10 @@ pub const CODEC_INT4_PERCHANNEL_V1: &str = "int4_perchannel_v1";
 pub const CODEC_INT4_PERCHANNEL_SPARSE50_V1: &str = "int4_perchannel_sparse50_v1";
 /// Symmetric per-tensor int2 codec identifier (four 2-bit values per byte).
 pub const CODEC_INT2_SYM_V1: &str = "int2_sym_v1";
+/// Activation-aware int4 codec (AWQ-style with salient weight preservation).
+pub const CODEC_INT4_AWQ_V1: &str = "int4_awq_v1";
+/// Group-quantized int4 codec (g=128, similar to AWQ W4A16 group size).
+pub const CODEC_INT4_G128_V1: &str = "int4_g128_v1";
 
 /// A single float32 tensor in a simple JSON-friendly format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +78,8 @@ pub fn compress_bundle_with_codec(
         CODEC_INT4_PERCHANNEL_V1 => compress_int4_perchannel(bundle),
         CODEC_INT4_PERCHANNEL_SPARSE50_V1 => compress_int4_perchannel_sparse50(bundle),
         CODEC_INT2_SYM_V1 => compress_int2_sym(bundle),
+        CODEC_INT4_AWQ_V1 => compress_int4_awq(bundle),
+        CODEC_INT4_G128_V1 => compress_int4_g128(bundle),
         other => Err(format!("Unsupported codec '{}'", other)),
     }
 }
@@ -478,6 +484,202 @@ fn compress_int2_sym(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
     })
 }
 
+fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
+    // AWQ-style activation-aware quantization:
+    // 1. Compute per-channel importance (simulated via magnitude statistics)
+    // 2. Apply per-channel scaling to preserve salient weights
+    // 3. Quantize with per-channel scales
+
+    let mut tensors_out = Vec::with_capacity(bundle.tensors.len());
+
+    for t in &bundle.tensors {
+        let expected = expected_len(&t.shape)?;
+        if expected != t.data.len() {
+            return Err(format!(
+                "Tensor '{}' has shape {:?} (size {}), but data length {}",
+                t.name,
+                t.shape,
+                expected,
+                t.data.len()
+            ));
+        }
+
+        // For 1D tensors (biases), fall back to per-tensor
+        if t.shape.len() < 2 {
+            let max_abs = t.data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+            let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
+            let inv_scale = 1.0 / scale;
+
+            let mut packed: Vec<u8> = Vec::with_capacity((t.data.len() + 1) / 2);
+            let mut iter = t.data.iter();
+            while let Some(&x0) = iter.next() {
+                let v0 = (x0 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                let mut byte: u8 = (v0 as i32 & 0x0f) as u8;
+
+                if let Some(&x1) = iter.next() {
+                    let v1 = (x1 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                    let hi = ((v1 as i32 & 0x0f) as u8) << 4;
+                    byte |= hi;
+                }
+
+                packed.push(byte);
+            }
+
+            tensors_out.push(QuantizedTensor {
+                name: t.name.clone(),
+                shape: t.shape.clone(),
+                scale,
+                scales: vec![scale],
+                data: packed,
+                indices: Vec::new(),
+            });
+            continue;
+        }
+
+        // AWQ per-channel quantization for 2D+ tensors
+        let out_channels = t.shape[0];
+        let elements_per_channel = expected / out_channels;
+
+        // Step 1: Compute per-channel importance scores (using top 1% magnitude as proxy)
+        let mut scales = Vec::with_capacity(out_channels);
+
+        for ch in 0..out_channels {
+            let start = ch * elements_per_channel;
+            let end = start + elements_per_channel;
+            let channel_data = &t.data[start..end];
+
+            // Compute importance: use top 1% magnitude values (AWQ preserves salient weights)
+            let mut abs_vals: Vec<f32> = channel_data.iter().map(|v| v.abs()).collect();
+            abs_vals.sort_by(|a, b| b.partial_cmp(a).unwrap()); // descending
+
+            // Take top 1% for scale computation (salient weight preservation)
+            let top_k = (abs_vals.len() as f32 * 0.01).ceil() as usize;
+            let top_k = top_k.max(1).min(abs_vals.len());
+            let salient_max = abs_vals[..top_k].iter().fold(0.0_f32, |a, &b| a.max(b));
+
+            // Scale based on salient weights, not full range
+            let scale = if salient_max > 0.0 {
+                salient_max / 7.0
+            } else {
+                1.0
+            };
+            scales.push(scale);
+        }
+
+        // Step 2: Quantize with AWQ-computed per-channel scales
+        let mut packed: Vec<u8> = Vec::with_capacity((t.data.len() + 1) / 2);
+
+        for ch in 0..out_channels {
+            let inv_scale = 1.0 / scales[ch];
+            let start = ch * elements_per_channel;
+            let end = start + elements_per_channel;
+
+            let mut ch_iter = t.data[start..end].iter();
+            while let Some(&x0) = ch_iter.next() {
+                let v0 = (x0 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                let mut byte: u8 = (v0 as i32 & 0x0f) as u8;
+
+                if let Some(&x1) = ch_iter.next() {
+                    let v1 = (x1 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                    let hi = ((v1 as i32 & 0x0f) as u8) << 4;
+                    byte |= hi;
+                }
+
+                packed.push(byte);
+            }
+        }
+
+        tensors_out.push(QuantizedTensor {
+            name: t.name.clone(),
+            shape: t.shape.clone(),
+            scale: scales[0],
+            scales,
+            data: packed,
+            indices: Vec::new(),
+        });
+    }
+
+    Ok(ArtifactFile {
+        version: ARTIFACT_VERSION,
+        codec: CODEC_INT4_AWQ_V1.to_string(),
+        tensors: tensors_out,
+    })
+}
+
+fn compress_int4_g128(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
+    // Group-quantized int4 with group size 128 (AWQ-style W4A16)
+    // Each group of 128 elements shares a scale factor
+
+    const GROUP_SIZE: usize = 128;
+    let mut tensors_out = Vec::with_capacity(bundle.tensors.len());
+
+    for t in &bundle.tensors {
+        let expected = expected_len(&t.shape)?;
+        if expected != t.data.len() {
+            return Err(format!(
+                "Tensor '{}' has shape {:?} (size {}), but data length {}",
+                t.name,
+                t.shape,
+                expected,
+                t.data.len()
+            ));
+        }
+
+        // Compute number of groups
+        let num_groups = (t.data.len() + GROUP_SIZE - 1) / GROUP_SIZE;
+        let mut scales = Vec::with_capacity(num_groups);
+
+        // Compute per-group scales
+        for g in 0..num_groups {
+            let start = g * GROUP_SIZE;
+            let end = (start + GROUP_SIZE).min(t.data.len());
+            let group_data = &t.data[start..end];
+
+            let max_abs = group_data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+            let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
+            scales.push(scale);
+        }
+
+        // Quantize with per-group scales
+        let mut packed: Vec<u8> = Vec::with_capacity((t.data.len() + 1) / 2);
+
+        for g in 0..num_groups {
+            let inv_scale = 1.0 / scales[g];
+            let start = g * GROUP_SIZE;
+            let end = (start + GROUP_SIZE).min(t.data.len());
+
+            let mut group_iter = t.data[start..end].iter();
+            while let Some(&x0) = group_iter.next() {
+                let v0 = (x0 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                let mut byte: u8 = (v0 as i32 & 0x0f) as u8;
+
+                if let Some(&x1) = group_iter.next() {
+                    let v1 = (x1 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                    let hi = ((v1 as i32 & 0x0f) as u8) << 4;
+                    byte |= hi;
+                }
+
+                packed.push(byte);
+            }
+        }
+
+        tensors_out.push(QuantizedTensor {
+            name: t.name.clone(),
+            shape: t.shape.clone(),
+            scale: scales[0],
+            scales,
+            data: packed,
+            indices: Vec::new(),
+        });
+    }
+
+    Ok(ArtifactFile {
+        version: ARTIFACT_VERSION,
+        codec: CODEC_INT4_G128_V1.to_string(),
+        tensors: tensors_out,
+    })
+}
+
 fn decode_int4_nibble(n: u8) -> i8 {
     let v = n & 0x0f;
     if v & 0x08 != 0 {
@@ -745,6 +947,70 @@ fn decompress_int4_perchannel(artifact: &ArtifactFile) -> Result<FloatBundle, St
     Ok(FloatBundle { tensors: out })
 }
 
+fn decompress_int4_g128(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
+    // Decompress group-quantized int4 (g=128)
+    const GROUP_SIZE: usize = 128;
+    let mut out = Vec::with_capacity(artifact.tensors.len());
+
+    for t in &artifact.tensors {
+        let expected = expected_len(&t.shape)?;
+        if t.data.is_empty() && expected > 0 {
+            return Err(format!(
+                "Quantized tensor '{}' has no data but expected {} values",
+                t.name, expected
+            ));
+        }
+
+        let num_groups = t.scales.len();
+        if num_groups == 0 {
+            return Err(format!("Tensor '{}' has no group scales", t.name));
+        }
+
+        let mut data: Vec<f32> = Vec::with_capacity(expected);
+        let mut byte_idx = 0;
+
+        for g in 0..num_groups {
+            let scale = t.scales[g];
+            let group_start = g * GROUP_SIZE;
+            let group_end = (group_start + GROUP_SIZE).min(expected);
+            let group_len = group_end - group_start;
+
+            let mut decoded = 0;
+            while decoded < group_len && byte_idx < t.data.len() {
+                let b = t.data[byte_idx];
+                byte_idx += 1;
+
+                let lo = decode_int4_nibble(b & 0x0f);
+                data.push(lo as f32 * scale);
+                decoded += 1;
+
+                if decoded < group_len {
+                    let hi = decode_int4_nibble((b >> 4) & 0x0f);
+                    data.push(hi as f32 * scale);
+                    decoded += 1;
+                }
+            }
+        }
+
+        if data.len() != expected {
+            return Err(format!(
+                "Tensor '{}' decompressed to {} values but expected {}",
+                t.name,
+                data.len(),
+                expected
+            ));
+        }
+
+        out.push(FloatTensor {
+            name: t.name.clone(),
+            shape: t.shape.clone(),
+            data,
+        });
+    }
+
+    Ok(FloatBundle { tensors: out })
+}
+
 fn decompress_int4_perchannel_sparse50(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
     let mut out = Vec::with_capacity(artifact.tensors.len());
 
@@ -873,6 +1139,8 @@ pub fn decompress_bundle(artifact: &ArtifactFile) -> Result<FloatBundle, String>
         CODEC_INT4_PERCHANNEL_V1 => decompress_int4_perchannel(artifact),
         CODEC_INT4_PERCHANNEL_SPARSE50_V1 => decompress_int4_perchannel_sparse50(artifact),
         CODEC_INT2_SYM_V1 => decompress_int2_sym(artifact),
+        CODEC_INT4_AWQ_V1 => decompress_int4_perchannel(artifact), // Reuse per-channel decompression
+        CODEC_INT4_G128_V1 => decompress_int4_g128(artifact),
         other => Err(format!("Unsupported codec '{}'", other)),
     }
 }

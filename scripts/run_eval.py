@@ -204,17 +204,43 @@ def main():
         "--codec",
         "int2_sym_v1",
     ])
+    
+    base_int4_awq_artifact = TMP_DIR / "base_int4_awq.tenpak"
+    run_tenpak_cli([
+        "compress",
+        "--input",
+        str(base_bundle_path),
+        "--output",
+        str(base_int4_awq_artifact),
+        "--codec",
+        "int4_awq_v1",
+    ])
+    
+    base_int4_g128_artifact = TMP_DIR / "base_int4_g128.tenpak"
+    run_tenpak_cli([
+        "compress",
+        "--input",
+        str(base_bundle_path),
+        "--output",
+        str(base_int4_g128_artifact),
+        "--codec",
+        "int4_g128_v1",
+    ])
 
     size_int8_bytes = base_int8_artifact.stat().st_size
     size_int4_bytes = base_int4_artifact.stat().st_size
     size_int4_perchannel_bytes = base_int4_perchannel_artifact.stat().st_size
     size_int4_sparse_bytes = base_int4_sparse_artifact.stat().st_size
     size_int2_bytes = base_int2_artifact.stat().st_size
+    size_int4_awq_bytes = base_int4_awq_artifact.stat().st_size
+    size_int4_g128_bytes = base_int4_g128_artifact.stat().st_size
     size_int8_gb = size_int8_bytes / 1e9
     size_int4_gb = size_int4_bytes / 1e9
     size_int4_perchannel_gb = size_int4_perchannel_bytes / 1e9
     size_int4_sparse_gb = size_int4_sparse_bytes / 1e9
     size_int2_gb = size_int2_bytes / 1e9
+    size_int4_awq_gb = size_int4_awq_bytes / 1e9
+    size_int4_g128_gb = size_int4_g128_bytes / 1e9
 
     # Decompress artifacts back to JSON bundles
     base_int8_bundle_path = TMP_DIR / "base_bundle_int8.json"
@@ -222,6 +248,8 @@ def main():
     base_int4_perchannel_bundle_path = TMP_DIR / "base_bundle_int4_perchannel.json"
     base_int4_sparse_bundle_path = TMP_DIR / "base_bundle_int4_sparse.json"
     base_int2_bundle_path = TMP_DIR / "base_bundle_int2.json"
+    base_int4_awq_bundle_path = TMP_DIR / "base_bundle_int4_awq.json"
+    base_int4_g128_bundle_path = TMP_DIR / "base_bundle_int4_g128.json"
 
     run_tenpak_cli([
         "decompress",
@@ -258,6 +286,20 @@ def main():
         "--output",
         str(base_int2_bundle_path),
     ])
+    run_tenpak_cli([
+        "decompress",
+        "--input",
+        str(base_int4_awq_artifact),
+        "--output",
+        str(base_int4_awq_bundle_path),
+    ])
+    run_tenpak_cli([
+        "decompress",
+        "--input",
+        str(base_int4_g128_artifact),
+        "--output",
+        str(base_int4_g128_bundle_path),
+    ])
 
     with base_int8_bundle_path.open() as f:
         base_int8_bundle = json.load(f)
@@ -269,6 +311,10 @@ def main():
         base_int4_sparse_bundle = json.load(f)
     with base_int2_bundle_path.open() as f:
         base_int2_bundle = json.load(f)
+    with base_int4_awq_bundle_path.open() as f:
+        base_int4_awq_bundle = json.load(f)
+    with base_int4_g128_bundle_path.open() as f:
+        base_int4_g128_bundle = json.load(f)
 
     # Rebuild models from quantized bundles and compute perplexity
     print("[tenpak] Evaluating int8 reconstructed model...")
@@ -306,16 +352,34 @@ def main():
     model_int2.to(device)
     ppl_int2 = compute_perplexity(model_int2, tokenizer, texts, device)
 
+    print("[tenpak] Evaluating int4 AWQ reconstructed model...")
+    int4_awq_sd = bundle_to_state_dict(base_int4_awq_bundle)
+    model_int4_awq = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
+    model_int4_awq.load_state_dict(int4_awq_sd)
+    model_int4_awq.to(device)
+    ppl_int4_awq = compute_perplexity(model_int4_awq, tokenizer, texts, device)
+
+    print("[tenpak] Evaluating int4 g128 reconstructed model...")
+    int4_g128_sd = bundle_to_state_dict(base_int4_g128_bundle)
+    model_int4_g128 = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
+    model_int4_g128.load_state_dict(int4_g128_sd)
+    model_int4_g128.to(device)
+    ppl_int4_g128 = compute_perplexity(model_int4_g128, tokenizer, texts, device)
+
     compression_int8 = size_fp_bytes / size_int8_bytes if size_int8_bytes > 0 else float("nan")
     compression_int4 = size_fp_bytes / size_int4_bytes if size_int4_bytes > 0 else float("nan")
     compression_int4_perchannel = size_fp_bytes / size_int4_perchannel_bytes if size_int4_perchannel_bytes > 0 else float("nan")
     compression_int4_sparse = size_fp_bytes / size_int4_sparse_bytes if size_int4_sparse_bytes > 0 else float("nan")
     compression_int2 = size_fp_bytes / size_int2_bytes if size_int2_bytes > 0 else float("nan")
+    compression_int4_awq = size_fp_bytes / size_int4_awq_bytes if size_int4_awq_bytes > 0 else float("nan")
+    compression_int4_g128 = size_fp_bytes / size_int4_g128_bytes if size_int4_g128_bytes > 0 else float("nan")
     delta_ppl_int8 = ppl_int8 - ppl_fp
     delta_ppl_int4 = ppl_int4 - ppl_fp
     delta_ppl_int4_perchannel = ppl_int4_perchannel - ppl_fp
     delta_ppl_int4_sparse = ppl_int4_sparse - ppl_fp
     delta_ppl_int2 = ppl_int2 - ppl_fp
+    delta_ppl_int4_awq = ppl_int4_awq - ppl_fp
+    delta_ppl_int4_g128 = ppl_int4_g128 - ppl_fp
 
     print("[tenpak] Codec results:")
     print(f"  FP baseline          : size={size_fp_gb:.3f} GB, ppl={ppl_fp:.4f}")
@@ -324,6 +388,19 @@ def main():
     print(f"  tenpak int4 (channel): size={size_int4_perchannel_gb:.3f} GB, ratio={compression_int4_perchannel:.2f}x, ppl={ppl_int4_perchannel:.4f} (Δ={delta_ppl_int4_perchannel:+.4f})")
     print(f"  tenpak int4 (sparse) : size={size_int4_sparse_gb:.3f} GB, ratio={compression_int4_sparse:.2f}x, ppl={ppl_int4_sparse:.4f} (Δ={delta_ppl_int4_sparse:+.4f})")
     print(f"  tenpak int2          : size={size_int2_gb:.3f} GB, ratio={compression_int2:.2f}x, ppl={ppl_int2:.4f} (Δ={delta_ppl_int2:+.4f})")
+    print(f"  tenpak int4 AWQ      : size={size_int4_awq_gb:.3f} GB, ratio={compression_int4_awq:.2f}x, ppl={ppl_int4_awq:.4f} (Δ={delta_ppl_int4_awq:+.4f})")
+    print(f"  tenpak int4 g128     : size={size_int4_g128_gb:.3f} GB, ratio={compression_int4_g128:.2f}x, ppl={ppl_int4_g128:.4f} (Δ={delta_ppl_int4_g128:+.4f})")
+    
+    # AWQ baseline comparison (from README)
+    ppl_pct_delta_awq = (delta_ppl_int4_awq / ppl_fp) * 100 if ppl_fp > 0 else float("nan")
+    ppl_pct_delta_g128 = (delta_ppl_int4_g128 / ppl_fp) * 100 if ppl_fp > 0 else float("nan")
+    print(f"\n[tenpak] AWQ comparison:")
+    print(f"  int4 AWQ % delta     : {ppl_pct_delta_awq:+.2f}% (target: <1%)")
+    print(f"  int4 g128 % delta    : {ppl_pct_delta_g128:+.2f}% (target: <1%)")
+    if abs(ppl_pct_delta_awq) < 1.0:
+        print(f"  int4 AWQ meets <1% target!")
+    if abs(ppl_pct_delta_g128) < 1.0:
+        print(f"  int4 g128 meets <1% target!")
 
     # Simulated small fine-tune: modify a small subset of parameters
     print(f"[tenpak] Creating simulated fine-tune by modifying a subset of weights...")
@@ -407,6 +484,8 @@ def main():
         f"| tenpak int4 (channel)       | {size_int4_perchannel_gb:.3f} | {compression_int4_perchannel:.2f}× | {ppl_int4_perchannel:.3f} | {delta_ppl_int4_perchannel:+.3f} |\n"
         f"| tenpak int4 (sparse 50%)    | {size_int4_sparse_gb:.3f} | {compression_int4_sparse:.2f}× | {ppl_int4_sparse:.3f} | {delta_ppl_int4_sparse:+.3f} |\n"
         f"| tenpak int2                 | {size_int2_gb:.3f} | {compression_int2:.2f}× | {ppl_int2:.3f} | {delta_ppl_int2:+.3f} |\n"
+        f"| tenpak int4 AWQ             | {size_int4_awq_gb:.3f} | {compression_int4_awq:.2f}× | {ppl_int4_awq:.3f} | {delta_ppl_int4_awq:+.3f} |\n"
+        f"| tenpak int4 g128            | {size_int4_g128_gb:.3f} | {compression_int4_g128:.2f}× | {ppl_int4_g128:.3f} | {delta_ppl_int4_g128:+.3f} |\n"
     )
 
     storage_table = (
