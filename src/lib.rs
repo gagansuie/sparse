@@ -540,7 +540,8 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
         let out_channels = t.shape[0];
         let elements_per_channel = expected / out_channels;
 
-        // Step 1: Compute per-channel importance scores (using top 1% magnitude as proxy)
+        // Step 1: Compute per-channel scales with improved outlier handling
+        // AWQ-style: use percentile-based clipping to reduce outlier impact
         let mut scales = Vec::with_capacity(out_channels);
 
         for ch in 0..out_channels {
@@ -548,18 +549,18 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
             let end = start + elements_per_channel;
             let channel_data = &t.data[start..end];
 
-            // Compute importance: use top 1% magnitude values (AWQ preserves salient weights)
+            // Use 99.9th percentile for scale computation (clip extreme outliers)
             let mut abs_vals: Vec<f32> = channel_data.iter().map(|v| v.abs()).collect();
-            abs_vals.sort_by(|a, b| b.partial_cmp(a).unwrap()); // descending
+            abs_vals.sort_by(|a, b| a.partial_cmp(b).unwrap()); // ascending
 
-            // Take top 1% for scale computation (salient weight preservation)
-            let top_k = (abs_vals.len() as f32 * 0.01).ceil() as usize;
-            let top_k = top_k.max(1).min(abs_vals.len());
-            let salient_max = abs_vals[..top_k].iter().fold(0.0_f32, |a, &b| a.max(b));
+            // Take 99.9th percentile (0.1% outliers clipped)
+            let percentile_idx =
+                ((abs_vals.len() as f32 * 0.999).floor() as usize).min(abs_vals.len() - 1);
+            let clipped_max = abs_vals[percentile_idx];
 
-            // Scale based on salient weights, not full range
-            let scale = if salient_max > 0.0 {
-                salient_max / 7.0
+            // Scale based on clipped range (reduces outlier impact)
+            let scale = if clipped_max > 0.0 {
+                clipped_max / 7.0
             } else {
                 1.0
             };
