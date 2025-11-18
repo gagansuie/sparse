@@ -8,6 +8,9 @@ use tenpak::{
     Artifact, Bundle, CODEC_INT4_SYM_V1, CODEC_INT8_SYM_V1,
 };
 
+const EMBEDDED_DOWNLOAD_SCRIPT: &str = include_str!("../scripts/download_demo_models.sh");
+const EMBEDDED_EVAL_SCRIPT: &str = include_str!("../scripts/run_eval_and_update_readme.py");
+
 /// 10pak CLI: compress and decompress simple tensor bundles.
 #[derive(Parser, Debug)]
 #[command(author, version, about = "10pak model artifact compressor", long_about = None)]
@@ -426,20 +429,44 @@ fn runeval_cmd(model: &str, samples: usize) -> Result<()> {
         .and_then(|p| p.parent())
         .context("Failed to determine project root relative to binary")?;
     let scripts_dir = root_dir.join("scripts");
-    if !scripts_dir.exists() {
-        return Err(anyhow::Error::msg(format!(
-            "Scripts directory not found at {}",
-            scripts_dir.display()
-        )));
-    }
 
-    let download_script_path = scripts_dir.join("download_demo_models.sh");
-    let eval_script_path = scripts_dir.join("run_eval_and_update_readme.py");
-    if !download_script_path.exists() || !eval_script_path.exists() {
-        return Err(anyhow::Error::msg(
-            "Required evaluation scripts not found; ensure the 'scripts/' directory is present",
-        ));
-    }
+    // Prefer scripts from disk; fall back to embedded copies if unavailable.
+    let mut temp_dir: Option<std::path::PathBuf> = None;
+    let (download_script_path, eval_script_path) = if scripts_dir.exists() {
+        let download_path = scripts_dir.join("download_demo_models.sh");
+        let eval_path = scripts_dir.join("run_eval_and_update_readme.py");
+        if download_path.exists() && eval_path.exists() {
+            (download_path, eval_path)
+        } else {
+            return Err(anyhow::Error::msg(
+                "Required evaluation scripts not found; ensure the 'scripts/' directory is present",
+            ));
+        }
+    } else {
+        let tmp = root_dir.join(".tenpak-scripts-tmp");
+        std::fs::create_dir_all(&tmp)
+            .context("Failed to create temporary directory for embedded scripts")?;
+
+        let download_path = tmp.join("download_demo_models.sh");
+        let eval_path = tmp.join("run_eval_and_update_readme.py");
+        std::fs::write(&download_path, EMBEDDED_DOWNLOAD_SCRIPT)
+            .context("Failed to write embedded download script")?;
+        std::fs::write(&eval_path, EMBEDDED_EVAL_SCRIPT)
+            .context("Failed to write embedded eval script")?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for path in [&download_path, &eval_path] {
+                let mut perms = std::fs::metadata(path)?.permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(path, perms)?;
+            }
+        }
+
+        temp_dir = Some(tmp);
+        (download_path, eval_path)
+    };
 
     // Run everything from the project root so relative paths inside scripts work.
     let work_dir = root_dir.to_path_buf();
@@ -484,7 +511,15 @@ fn runeval_cmd(model: &str, samples: usize) -> Result<()> {
         .context("Failed to run evaluation script")?;
 
     if !status.success() {
+        if let Some(dir) = &temp_dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
         return Err(anyhow::Error::msg("Evaluation failed"));
+    }
+
+    if let Some(dir) = &temp_dir {
+        std::fs::remove_dir_all(dir)
+            .context("Failed to clean up temporary evaluation scripts directory")?;
     }
 
     println!("[tenpak] Evaluation complete!");

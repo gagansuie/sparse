@@ -1,4 +1,4 @@
-name: Build and Release tenpak
+name: Build and Upload Artifacts
 
 on:
   push:
@@ -63,32 +63,44 @@ jobs:
           shared-key: ${{ env.TARGET }}
           cache-on-failure: true
 
-      - name: Build and package using package.sh
+      - name: Build release binary
+        run: |
+          set -euxo pipefail
+          cargo build --release --target ${{ env.TARGET }}
+          echo "✓ Binary built"
+
+      - name: Prepare release bundle
         shell: bash
         run: |
           set -euxo pipefail
-          # Use the packaging script (builds binary, creates tarball with embedded scripts)
-          chmod +x scripts/package.sh
-          ./scripts/package.sh
-          
-          # Rename tarball to include version and target
           VERSION="${RELEASE_VERSION}"
           if [ -n "$VERSION" ]; then
-            ARCHIVE_NAME="${BINARY}-${VERSION}-${TARGET}.tar.gz"
+            ARCHIVE_NAME="${{ env.BINARY }}-${VERSION}-${{ env.TARGET }}.tar.gz"
           else
-            ARCHIVE_NAME="${BINARY}-${TARGET}.tar.gz"
+            ARCHIVE_NAME="${{ env.BINARY }}-${{ env.TARGET }}.tar.gz"
           fi
-          
+
+          # Create tarball structure: bin/tenpak, LICENSE
+          mkdir -p release-bundle/bin
+
+          # Copy binary (built with GPU acceleration, ML disabled)
+          cp target/${{ env.TARGET }}/ci-release/${{ env.BINARY }} release-bundle/bin/${{ env.BINARY }}
+
+          # Copy license and docs
+          cp LICENSE release-bundle/LICENSE
+          [ -f README.md ] && cp README.md release-bundle/README.md || true
+
+          # Create single tarball
+          tar -czf "${ARCHIVE_NAME}" -C release-bundle .
+
+          # Prepare for upload
           mkdir -p artifacts
-          mv tenpak.tar.gz "artifacts/${ARCHIVE_NAME}"
-          
-          echo "✓ Package created: ${ARCHIVE_NAME}"
-          echo "✓ Scripts are embedded in the binary"
+          mv "${ARCHIVE_NAME}" artifacts/
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tenpak-linux
+          name: ${{ env.BINARY }}-${{ env.TARGET }}
           path: artifacts
           if-no-files-found: error
 
@@ -96,7 +108,7 @@ jobs:
     name: Publish GitHub release assets
     needs:
       - determine-release
-      - build-linux
+      - build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -114,11 +126,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Create or update GitHub release
+      - name: Create GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euxo pipefail
+          # Create tag and release in one step
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             echo "Release $TAG_NAME already exists, will update assets"
           else
