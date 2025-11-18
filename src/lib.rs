@@ -1214,4 +1214,91 @@ mod tests {
         let res = compress_bundle(&bundle);
         assert!(res.is_err(), "expected shape mismatch to produce an error");
     }
+
+    fn assert_close(a: &[f32], b: &[f32], tol: f32) {
+        assert_eq!(a.len(), b.len());
+        for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+            let diff = (x - y).abs();
+            assert!(
+                diff <= tol,
+                "value mismatch at {}: {} vs {} (tol {})",
+                i,
+                x,
+                y,
+                tol
+            );
+        }
+    }
+
+    #[test]
+    fn perchannel_round_trip_even_channels() {
+        // Two channels, each with four values.
+        let tensor = FloatTensor {
+            name: "linear.weight".to_string(),
+            shape: vec![2, 4],
+            data: vec![
+                0.5, -0.75, 0.2, -0.1, // channel 0
+                1.2, -1.0, 0.6, -0.4, // channel 1
+            ],
+        };
+        let bundle = FloatBundle {
+            tensors: vec![tensor.clone()],
+        };
+
+        let artifact = compress_bundle_with_codec(&bundle, CODEC_INT4_PERCHANNEL_V1)
+            .expect("per-channel compression should succeed");
+        let restored = decompress_bundle(&artifact).expect("per-channel decompress succeeds");
+
+        assert_eq!(restored.tensors.len(), 1);
+        let recovered = &restored.tensors[0];
+        assert_eq!(recovered.name, tensor.name);
+        assert_eq!(recovered.shape, tensor.shape);
+        assert_close(&tensor.data, &recovered.data, 0.12);
+    }
+
+    #[test]
+    fn perchannel_round_trip_odd_elements_per_channel() {
+        // Three channels, each with 3 values (odd count) to stress nibble alignment.
+        let tensor = FloatTensor {
+            name: "conv.weight".to_string(),
+            shape: vec![3, 3],
+            data: vec![
+                0.9, -0.5, 0.1, // ch0
+                -1.3, 0.4, 0.2, // ch1
+                0.0, -0.2, 0.8, // ch2
+            ],
+        };
+        let bundle = FloatBundle {
+            tensors: vec![tensor.clone()],
+        };
+
+        let artifact = compress_bundle_with_codec(&bundle, CODEC_INT4_PERCHANNEL_V1)
+            .expect("per-channel compression should succeed");
+        let restored = decompress_bundle(&artifact).expect("per-channel decompress succeeds");
+
+        let recovered = &restored.tensors[0];
+        assert_eq!(recovered.shape, tensor.shape);
+        assert_close(&tensor.data, &recovered.data, 0.15);
+    }
+
+    #[test]
+    fn perchannel_round_trip_bias_fallback() {
+        // 1D tensor should fall back to per-tensor quantization even via per-channel codec.
+        let tensor = FloatTensor {
+            name: "bias".to_string(),
+            shape: vec![5],
+            data: vec![0.3, -0.7, 0.1, 0.0, 0.9],
+        };
+        let bundle = FloatBundle {
+            tensors: vec![tensor.clone()],
+        };
+
+        let artifact = compress_bundle_with_codec(&bundle, CODEC_INT4_PERCHANNEL_V1)
+            .expect("bias fallback compression should succeed");
+        let restored = decompress_bundle(&artifact).expect("bias fallback decompress succeeds");
+
+        let recovered = &restored.tensors[0];
+        assert_eq!(recovered.shape, tensor.shape);
+        assert_close(&tensor.data, &recovered.data, 0.15);
+    }
 }

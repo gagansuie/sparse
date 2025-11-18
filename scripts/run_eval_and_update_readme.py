@@ -138,6 +138,19 @@ def main():
     with base_bundle_path.open("w") as f:
         json.dump(base_bundle, f)
 
+    # Sanity-check: rebuild model directly from the float bundle to ensure
+    # state_dict⇄bundle conversion preserves perplexity before quantization.
+    print("[tenpak] Verifying FP bundle round-trip...")
+    base_bundle_sd = bundle_to_state_dict(base_bundle)
+    model_bundle = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
+    model_bundle.load_state_dict(base_bundle_sd)
+    model_bundle.to(device)
+    ppl_bundle = compute_perplexity(model_bundle, tokenizer, texts, device)
+    delta_bundle = ppl_bundle - ppl_fp
+    print(
+        f"[tenpak] Bundle round-trip perplexity: {ppl_bundle:.4f} (Δ {delta_bundle:+.4f} vs FP)"
+    )
+
     base_int8_artifact = TMP_DIR / "base_int8.tenpak"
     base_int4_artifact = TMP_DIR / "base_int4.tenpak"
 
