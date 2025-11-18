@@ -285,94 +285,14 @@ number of variants grows (thousands of fine-tunes per base), the storage and
 replication savings from base+delta artifacts compound, while decode remains a
 simple, local operation at load time.
 
-## Run the full evaluation pipeline
-
-### Using the CLI (recommended)
-
-The easiest way to run the full evaluation pipeline is using the built-in `runeval` command:
-
-```bash
-# Build the CLI
-cargo build --release
-
-# Run evaluation with default settings (gpt2, 128 samples)
-./target/release/tenpak runeval
-
-# Or customize the model and sample count
-./target/release/tenpak runeval --model gpt2 --samples 256
-```
-
-The `runeval` command will:
-- Check for Python installation
-- Download the specified model automatically
-- Compress the model with int8 and int4 codecs
-- Compute perplexity metrics
-- Create simulated fine-tune and delta artifacts
-- **Print the updated README to stdout** (copy and paste into README.md)
-
-### Using the shell script (alternative)
-
-You can also run the evaluation using the orchestration script:
-
-```bash
-cd tenpak
-
-# Make orchestration script executable
-chmod +x scripts/run_full_eval.sh
-
-# Optional: choose model (default is gpt2)
-export TENPAK_EVAL_MODEL="gpt2"
-
-# Run the full pipeline
-./scripts/run_full_eval.sh
-```
-
-### Running on EC2
-
-#### Option 1: Using packaged binary (from CI/CD)
-
-```bash
-# Download release from GitHub
-wget https://github.com/youruser/tenpak/releases/download/v0.1.0/tenpak-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-
-# Extract to a directory
-mkdir tenpak && cd tenpak
-tar -xzf ../tenpak-*.tar.gz
-
-# Install (copies binary to /usr/local/bin)
-sudo ./install.sh
-
-# Or install to custom location
-./install.sh --prefix ~/.local
-
-# Run evaluation (scripts are embedded in the binary)
-tenpak runeval
-
-# The updated README will be printed - copy and paste it back
-```
-
-#### Option 2: From source
-
-```bash
-# Clone or copy the project
-git clone https://github.com/youruser/tenpak.git
-cd tenpak
-
-# Build and run
-cargo build --release
-./target/release/tenpak runeval
-```
-
-**Note:** The scripts are embedded in the binary - no external files needed!
-
 ## Results (fill in with your own evals)
 
-Once you have run the evaluation plan (e.g., TinyLlama + Wikitext-2), you can
+Once you have run an evaluation plan (e.g., TinyLlama + Wikitext-2), you can
 summarize the tradeoffs in a buyer-friendly way.
 
 ### Codec vs. quality for a single model
 
-_Model: gpt2 (runeval default settings)_
+_Model: gpt2_
 
 | Variant                     | On-disk size (GB) | Compression vs FP | Perplexity | Δ Perplexity |
 |-----------------------------|-------------------|-------------------|------------|--------------|

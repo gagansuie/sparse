@@ -1,5 +1,4 @@
 use std::fs;
-use std::process::Command;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -7,9 +6,6 @@ use tenpak::{
     compress_bundle_with_codec, create_delta_artifact, decompress_bundle, materialize_artifact,
     Artifact, Bundle, CODEC_INT4_SYM_V1, CODEC_INT8_SYM_V1,
 };
-
-const EMBEDDED_DOWNLOAD_SCRIPT: &str = include_str!("../scripts/download_demo_models.sh");
-const EMBEDDED_EVAL_SCRIPT: &str = include_str!("../scripts/run_eval.py");
 
 /// 10pak CLI: compress and decompress simple tensor bundles.
 #[derive(Parser, Debug)]
@@ -93,16 +89,6 @@ enum Commands {
         #[arg(short, long)]
         output: String,
     },
-    /// Run the full evaluation pipeline (downloads models, computes metrics, prints updated README)
-    #[command(name = "runeval")]
-    RunEval {
-        /// Model to evaluate (default: gpt2)
-        #[arg(long, default_value = "gpt2")]
-        model: String,
-        /// Number of evaluation samples (default: 128)
-        #[arg(long, default_value_t = 128)]
-        samples: usize,
-    },
 }
 
 fn main() -> Result<()> {
@@ -133,7 +119,6 @@ fn main() -> Result<()> {
             delta,
             output,
         } => materialize_cmd(&base, &delta, &output)?,
-        Commands::RunEval { model, samples } => runeval_cmd(&model, samples)?,
     }
 
     Ok(())
@@ -413,137 +398,6 @@ fn delta_cmd(base: &str, variant: &str, output: &str, epsilon: f32) -> Result<()
     );
 
     Ok(())
-}
-
-fn runeval_cmd(model: &str, samples: usize) -> Result<()> {
-    println!("[tenpak] Starting evaluation pipeline");
-    println!("[tenpak] Model: {}", model);
-    println!("[tenpak] Samples: {}", samples);
-
-    // Find the binary location
-    let exe = std::env::current_exe().context("Failed to get executable path")?;
-
-    // Resolve project root as parent of the binary's directory (target/{profile}).
-    let root_dir = exe
-        .parent()
-        .and_then(|p| p.parent())
-        .context("Failed to determine project root relative to binary")?;
-    let scripts_dir = root_dir.join("scripts");
-
-    // Prefer scripts from disk; fall back to embedded copies if unavailable.
-    let mut temp_dir: Option<std::path::PathBuf> = None;
-    let (download_script_path, eval_script_path) = if scripts_dir.exists() {
-        let download_path = scripts_dir.join("download_demo_models.sh");
-        let eval_path = scripts_dir.join("run_eval.py");
-        if download_path.exists() && eval_path.exists() {
-            (download_path, eval_path)
-        } else {
-            return Err(anyhow::Error::msg(
-                "Required evaluation scripts not found; ensure the 'scripts/' directory is present",
-            ));
-        }
-    } else {
-        let tmp = root_dir.join(".tenpak-scripts-tmp");
-        std::fs::create_dir_all(&tmp)
-            .context("Failed to create temporary directory for embedded scripts")?;
-
-        let download_path = tmp.join("download_demo_models.sh");
-        let eval_path = tmp.join("run_eval.py");
-        std::fs::write(&download_path, EMBEDDED_DOWNLOAD_SCRIPT)
-            .context("Failed to write embedded download script")?;
-        std::fs::write(&eval_path, EMBEDDED_EVAL_SCRIPT)
-            .context("Failed to write embedded eval script")?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            for path in [&download_path, &eval_path] {
-                let mut perms = std::fs::metadata(path)?.permissions();
-                perms.set_mode(0o755);
-                std::fs::set_permissions(path, perms)?;
-            }
-        }
-
-        temp_dir = Some(tmp);
-        (download_path, eval_path)
-    };
-
-    // Run everything from the project root so relative paths inside scripts work.
-    let work_dir = root_dir.to_path_buf();
-    println!("[tenpak] Working directory: {}", work_dir.display());
-
-    // Check for Python
-    let python = find_python()?;
-    println!("[tenpak] Using Python: {}", python);
-
-    // Run download script
-    println!("[tenpak] Downloading models...");
-    let status = Command::new("bash")
-        .arg(&download_script_path)
-        .current_dir(&work_dir)
-        .env("MODELS", model)
-        .status()
-        .context("Failed to run download script")?;
-
-    if !status.success() {
-        return Err(anyhow::Error::msg("Model download failed"));
-    }
-
-    // Run evaluation script
-    println!("[tenpak] Running evaluation...");
-
-    // Check if venv was created by download script
-    let venv_python = work_dir.join(".tenpak-eval-venv/bin/python");
-    let python_to_use = if venv_python.exists() {
-        println!("[tenpak] Using venv Python: {}", venv_python.display());
-        venv_python.to_string_lossy().to_string()
-    } else {
-        python.clone()
-    };
-
-    let status = Command::new(&python_to_use)
-        .arg(&eval_script_path)
-        .current_dir(&work_dir)
-        .env("TENPAK_EVAL_MODEL", model)
-        .env("TENPAK_EVAL_SAMPLES", samples.to_string())
-        .env("TENPAK_BIN", exe.to_string_lossy().to_string())
-        .status()
-        .context("Failed to run evaluation script")?;
-
-    if !status.success() {
-        if let Some(dir) = &temp_dir {
-            let _ = std::fs::remove_dir_all(dir);
-        }
-        return Err(anyhow::Error::msg("Evaluation failed"));
-    }
-
-    if let Some(dir) = &temp_dir {
-        std::fs::remove_dir_all(dir)
-            .context("Failed to clean up temporary evaluation scripts directory")?;
-    }
-
-    println!("[tenpak] Evaluation complete!");
-
-    Ok(())
-}
-
-fn find_python() -> Result<String> {
-    let candidates = ["python3", "python"];
-
-    for cmd in &candidates {
-        if Command::new(cmd)
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return Ok(cmd.to_string());
-        }
-    }
-
-    Err(anyhow::Error::msg(
-        "Python not found. Please install Python 3 (python3 or python must be in PATH)",
-    ))
 }
 
 fn materialize_cmd(base: &str, delta: &str, output: &str) -> Result<()> {
