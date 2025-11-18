@@ -79,7 +79,7 @@ jobs:
             ARCHIVE_NAME="${{ env.BINARY }}-${{ env.TARGET }}.tar.gz"
           fi
 
-          # Create tarball structure: bin/tenpak, LICENSE
+          # Create tarball structure: bin/tenpak, scripts/, docs
           mkdir -p release-bundle/bin
 
           # Copy binary
@@ -88,6 +88,13 @@ jobs:
           # Copy license and docs
           cp LICENSE release-bundle/LICENSE
           [ -f README.md ] && cp README.md release-bundle/README.md || true
+
+          # Include helper scripts required for evaluation workflows
+          if [ -d scripts ]; then
+            mkdir -p release-bundle/scripts
+            cp scripts/*.sh release-bundle/scripts/
+            cp scripts/*.py release-bundle/scripts/
+          fi
 
           # Create single tarball
           tar -czf "${ARCHIVE_NAME}" -C release-bundle .
