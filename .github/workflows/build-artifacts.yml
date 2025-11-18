@@ -65,8 +65,7 @@ jobs:
 
       - name: Build release binary
         run: |
-          set -euxo pipefail
-          cargo build --release --target ${{ env.TARGET }}
+          cargo build --profile ci-release --target ${{ env.TARGET }}
           echo "✓ Binary built"
 
       - name: Prepare release bundle
@@ -83,7 +82,7 @@ jobs:
           # Create tarball structure: bin/tenpak, LICENSE
           mkdir -p release-bundle/bin
 
-          # Copy binary (built with GPU acceleration, ML disabled)
+          # Copy binary
           cp target/${{ env.TARGET }}/ci-release/${{ env.BINARY }} release-bundle/bin/${{ env.BINARY }}
 
           # Copy license and docs
