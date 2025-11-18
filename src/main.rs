@@ -413,10 +413,6 @@ fn delta_cmd(base: &str, variant: &str, output: &str, epsilon: f32) -> Result<()
 }
 
 fn runeval_cmd(model: &str, samples: usize) -> Result<()> {
-    // Embed scripts directly in the binary
-    const DOWNLOAD_SCRIPT: &str = include_str!("../scripts/download_demo_models.sh");
-    const EVAL_SCRIPT: &str = include_str!("../scripts/run_eval_and_update_readme.py");
-
     println!("[tenpak] Starting evaluation pipeline");
     println!("[tenpak] Model: {}", model);
     println!("[tenpak] Samples: {}", samples);
@@ -424,35 +420,34 @@ fn runeval_cmd(model: &str, samples: usize) -> Result<()> {
     // Find the binary location
     let exe = std::env::current_exe().context("Failed to get executable path")?;
 
-    // Use current directory as working directory
-    let work_dir = std::env::current_dir().context("Failed to get current directory")?;
+    // Resolve project root as parent of the binary's directory (target/{profile}).
+    let root_dir = exe
+        .parent()
+        .and_then(|p| p.parent())
+        .context("Failed to determine project root relative to binary")?;
+    let scripts_dir = root_dir.join("scripts");
+    if !scripts_dir.exists() {
+        return Err(anyhow::Error::msg(format!(
+            "Scripts directory not found at {}",
+            scripts_dir.display()
+        )));
+    }
+
+    let download_script_path = scripts_dir.join("download_demo_models.sh");
+    let eval_script_path = scripts_dir.join("run_eval_and_update_readme.py");
+    if !download_script_path.exists() || !eval_script_path.exists() {
+        return Err(anyhow::Error::msg(
+            "Required evaluation scripts not found; ensure the 'scripts/' directory is present",
+        ));
+    }
+
+    // Run everything from the project root so relative paths inside scripts work.
+    let work_dir = root_dir.to_path_buf();
     println!("[tenpak] Working directory: {}", work_dir.display());
 
     // Check for Python
     let python = find_python()?;
     println!("[tenpak] Using Python: {}", python);
-
-    // Create temporary directory for scripts
-    let temp_dir = work_dir.join(".tenpak-scripts-tmp");
-    std::fs::create_dir_all(&temp_dir).context("Failed to create temp scripts directory")?;
-
-    // Write download script to temp location
-    let download_script_path = temp_dir.join("download_demo_models.sh");
-    std::fs::write(&download_script_path, DOWNLOAD_SCRIPT)
-        .context("Failed to write download script")?;
-
-    // Make download script executable
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&download_script_path)?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&download_script_path, perms)?;
-    }
-
-    // Write eval script to temp location
-    let eval_script_path = temp_dir.join("run_eval_and_update_readme.py");
-    std::fs::write(&eval_script_path, EVAL_SCRIPT).context("Failed to write eval script")?;
 
     // Run download script
     println!("[tenpak] Downloading models...");
@@ -489,13 +484,8 @@ fn runeval_cmd(model: &str, samples: usize) -> Result<()> {
         .context("Failed to run evaluation script")?;
 
     if !status.success() {
-        // Clean up temp directory
-        let _ = std::fs::remove_dir_all(&temp_dir);
         return Err(anyhow::Error::msg("Evaluation failed"));
     }
-
-    // Clean up temp directory
-    std::fs::remove_dir_all(&temp_dir).context("Failed to clean up temp scripts directory")?;
 
     println!("[tenpak] Evaluation complete!");
 

@@ -372,26 +372,24 @@ summarize the tradeoffs in a buyer-friendly way.
 
 ### Codec vs. quality for a single model
 
-Example table structure:
+_Model: gpt2 (runeval default settings)_
 
-| Variant           | On-disk size (GB) | Compression vs FP | Perplexity (↓) | Δ Perplexity | Task accuracy | Δ Accuracy |
-|-------------------|-------------------|-------------------|----------------|--------------|---------------|-----------|
-| FP baseline       |                   | 1.0×              |                |              |               |           |
-| tenpak int8        |                   |                   |                |              |               |           |
-| tenpak int4        |                   |                   |                |              |               |           |
-
-You would fill in the sizes, perplexity and any downstream metrics from your
-Python evaluation harness.
+| Variant                     | On-disk size (GB) | Compression vs FP | Perplexity | Δ Perplexity |
+|-----------------------------|-------------------|-------------------|------------|--------------|
+| FP baseline                 | 0.503 | 1.0×              | 57.596 | 0.0          |
+| tenpak int8                 | 0.163 | 3.08× | 71.437 | +13.841 |
+| tenpak int4 (tensor)        | 0.082 | 6.16× | 8079.864 | +8022.268 |
+| tenpak int4 (channel)       | 0.082 | 6.11× | 26337.703 | +26280.107 |
+| tenpak int4 (sparse 50%)    | 0.367 | 1.37× | 69381532284849562575377592586600448.000 | +69381532284849562575377592586600448.000 |
+| tenpak int2                 | 0.041 | 12.33× | 50257.014 | +50199.418 |
 
 ### Base + delta fine-tune storage
 
-Example table structure for one base model + one fine-tune:
-
-| Variant                     | Files stored                         | Total on-disk size             | Notes                                      |
-|-----------------------------|--------------------------------------|--------------------------------|--------------------------------------------|
-| Full FP fine-tune           | `base_fp.pt` + `ft_fp.pt`           | `S_base_fp + S_ft_fp`          | Two full-precision checkpoints.           |
-| Full tenpak fine-tune        | `base_fp.pt` + `ft_int4.tenpak`  | `S_base_fp + S_ft_int4`        | Compress the fine-tune only.              |
-| tenpak base + delta (A)      | `base_int4.tenpak` + `ft_delta`  | `S_base_int4 + S_delta`        | Compressed base + small variant delta.    |
+| Variant                     | Files stored                         | Total on-disk size (GB) | Notes                                      |
+|-----------------------------|--------------------------------------|--------------------------|--------------------------------------------|
+| Full FP fine-tune           | `base_fp.pt` + `ft_fp.pt`           | 1.000   | Two full-precision checkpoints.           |
+| Full tenpak fine-tune       | `base_fp.pt` + `ft_int4.tenpak`    | 0.584 | Compress the fine-tune only.              |
+| tenpak base + delta (A)     | `base_int4.tenpak` + `ft_delta`    | 0.163| Compressed base + small variant delta.    |
 
 For a fleet of many fine-tunes, you can extend this to show how the base+delta
 layout scales versus storing full checkpoints per variant.
