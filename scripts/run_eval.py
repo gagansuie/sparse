@@ -4,6 +4,8 @@ import math
 import os
 import subprocess
 import time
+from collections import OrderedDict
+import gc
 from pathlib import Path
 
 import torch
@@ -24,6 +26,25 @@ LOCAL_MODEL_DIR = MODELS_DIR / SAFE_NAME
 FT_FP_DIR = MODELS_DIR / f"{SAFE_NAME}_ft_fp"
 TMP_DIR = ROOT / "tmp_eval"
 TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+SKIP_QUANT_SUBSTRINGS = (
+    "wte",
+    "wpe",
+    "embed",
+    "embedding",
+    "ln",
+    "layernorm",
+    "norm",
+    "lm_head",
+    "bias",
+)
+FOCUS_QUANT_SUBSTRINGS = (
+    "attn",
+    "mlp",
+    "c_proj",
+    "c_fc",
+    "proj",
+)
 
 
 def dir_size_bytes(path: Path) -> int:
@@ -82,14 +103,40 @@ def compute_perplexity(model, tokenizer, texts, device, max_length: int = 512) -
     return math.exp(nll / ntokens)
 
 
-def state_dict_to_bundle(sd) -> dict:
+def should_quantize_tensor(name: str, tensor: torch.Tensor) -> bool:
+    if tensor.dim() < 2:
+        return False
+    lower = name.lower()
+    if not lower.endswith("weight"):
+        return False
+    if any(skip in lower for skip in SKIP_QUANT_SUBSTRINGS):
+        return False
+    if not any(token in lower for token in FOCUS_QUANT_SUBSTRINGS):
+        return False
+    return True
+
+
+def state_dict_to_bundle(
+    sd,
+    *,
+    activation_stats=None,
+    tensor_filter=None,
+) -> dict:
     tensors = []
     for name, tensor in sd.items():
+        if tensor_filter and not tensor_filter(name, tensor):
+            continue
         t = tensor.detach().cpu().float()
         shape = list(t.shape)
         data = t.reshape(-1).tolist()
         tensors.append({"name": name, "shape": shape, "data": data})
-    return {"tensors": tensors}
+
+    bundle = {"tensors": tensors}
+    if activation_stats:
+        bundle["activation_stats"] = activation_stats
+    else:
+        bundle["activation_stats"] = {}
+    return bundle
 
 
 def bundle_to_state_dict(bundle: dict):
@@ -102,11 +149,17 @@ def bundle_to_state_dict(bundle: dict):
     return sd
 
 
-def evaluate_bundle_with_model(label, bundle, model, tokenizer, texts, device):
-    """Load bundle weights into `model`, run perplexity, then free GPU memory."""
+def evaluate_bundle_with_model(label, bundle, model, tokenizer, texts, device, base_state_dict):
+    """Load bundle weights into `model`, overlay quantized tensors, and run perplexity."""
     print(f"[tenpak] Evaluating {label}...")
+    model.load_state_dict(base_state_dict, strict=True)
     sd = bundle_to_state_dict(bundle)
-    model.load_state_dict(sd)
+    model_sd = model.state_dict()
+    with torch.no_grad():
+        for name, tensor in sd.items():
+            if name not in model_sd:
+                continue
+            model_sd[name].copy_(tensor.to(model_sd[name].dtype))
     model.to(device)
     ppl = compute_perplexity(model, tokenizer, texts, device)
     model.to("cpu")
@@ -178,7 +231,7 @@ def collect_activation_stats(
         if count == 0:
             continue
         mean = (tensor_sum / count).tolist()
-        stats[f"{name}.weight"] = {"activation_means": mean}
+        stats[f"{name}.weight"] = mean.tolist()
 
     print(
         f"[tenpak] Captured activation stats for {len(stats)} tensors using {calib_count} samples."
@@ -216,8 +269,35 @@ def main():
 
     # Build bundle and compress with int8/int4
     print("[tenpak] Building bundle from state_dict (this may take a while)...")
-    base_sd = model.state_dict()
-    base_bundle = state_dict_to_bundle(base_sd)
+    base_sd = OrderedDict(
+        (name, param.detach().cpu().clone()) for name, param in model.state_dict().items()
+    )
+
+    activation_stats = collect_activation_stats(
+        model,
+        tokenizer,
+        texts,
+        device,
+    )
+    quantizable_keys = [name for name in base_sd if should_quantize_tensor(name, base_sd[name])]
+    quant_activation_stats = {
+        name: activation_stats[name]
+        for name in quantizable_keys
+        if name in activation_stats
+    }
+    missing_stats = [name for name in quantizable_keys if name not in quant_activation_stats]
+    if missing_stats:
+        print(
+            f"[tenpak][warn] Missing activation stats for {len(missing_stats)} tensors; falling back to no-op alphas."
+        )
+    print(
+        f"[tenpak] Quantizing {len(quantizable_keys)} tensors (out of {len(base_sd)})"
+    )
+    base_bundle = state_dict_to_bundle(
+        base_sd,
+        activation_stats=quant_activation_stats,
+        tensor_filter=should_quantize_tensor,
+    )
     base_bundle_path = TMP_DIR / "base_bundle.json"
     with base_bundle_path.open("w") as f:
         json.dump(base_bundle, f)
@@ -239,6 +319,7 @@ def main():
         tokenizer,
         texts,
         device,
+        base_sd,
     )
     delta_bundle = ppl_bundle - ppl_fp
     print(
@@ -423,6 +504,7 @@ def main():
         tokenizer,
         texts,
         device,
+        base_sd,
     )
     ppl_int4 = evaluate_bundle_with_model(
         "int4 (per-tensor) reconstructed model",
@@ -431,6 +513,7 @@ def main():
         tokenizer,
         texts,
         device,
+        base_sd,
     )
     ppl_int4_perchannel = evaluate_bundle_with_model(
         "int4 (per-channel) reconstructed model",
@@ -439,6 +522,7 @@ def main():
         tokenizer,
         texts,
         device,
+        base_sd,
     )
     ppl_int4_sparse = evaluate_bundle_with_model(
         "int4 (sparse 50%) reconstructed model",
@@ -447,6 +531,7 @@ def main():
         tokenizer,
         texts,
         device,
+        base_sd,
     )
     ppl_int2 = evaluate_bundle_with_model(
         "int2 reconstructed model",
@@ -455,6 +540,7 @@ def main():
         tokenizer,
         texts,
         device,
+        base_sd,
     )
     ppl_int4_awq = evaluate_bundle_with_model(
         "int4 AWQ reconstructed model",
@@ -463,6 +549,7 @@ def main():
         tokenizer,
         texts,
         device,
+        base_sd,
     )
     ppl_int4_g128 = evaluate_bundle_with_model(
         "int4 g128 reconstructed model",
@@ -471,6 +558,7 @@ def main():
         tokenizer,
         texts,
         device,
+        base_sd,
     )
     del eval_model
 
@@ -510,6 +598,33 @@ def main():
     if abs(ppl_pct_delta_g128) < 1.0:
         print(f"  int4 g128 meets <1% target!")
 
+    # Free large bundles before fine-tune simulation
+    del (
+        base_int8_bundle,
+        base_int4_bundle,
+        base_int4_perchannel_bundle,
+        base_int4_sparse_bundle,
+        base_int2_bundle,
+        base_int4_awq_bundle,
+        base_int4_g128_bundle,
+    )
+    for path in [
+        base_int8_bundle_path,
+        base_int4_bundle_path,
+        base_int4_perchannel_bundle_path,
+        base_int4_sparse_bundle_path,
+        base_int2_bundle_path,
+        base_int4_awq_bundle_path,
+        base_int4_g128_bundle_path,
+    ]:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    gc.collect()
+    if isinstance(device, str) and device.startswith("cuda"):
+        torch.cuda.empty_cache()
+
     # Simulated small fine-tune: modify a small subset of parameters
     print(f"[tenpak] Creating simulated fine-tune by modifying a subset of weights...")
     ft_sd = {}
@@ -537,7 +652,10 @@ def main():
 
     # Build fine-tune bundle and compress
     print("[tenpak] Building fine-tune bundle and compressing with int4...")
-    ft_bundle = state_dict_to_bundle(ft_sd)
+    ft_bundle = state_dict_to_bundle(
+        ft_sd,
+        tensor_filter=should_quantize_tensor,
+    )
     ft_bundle_path = TMP_DIR / "ft_bundle.json"
     with ft_bundle_path.open("w") as f:
         json.dump(ft_bundle, f)
