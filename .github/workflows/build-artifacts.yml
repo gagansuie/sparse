@@ -88,6 +88,7 @@ jobs:
           # Copy license and docs
           cp LICENSE release-bundle/LICENSE
           [ -f README.md ] && cp README.md release-bundle/README.md || true
+          [ -f requirements-eval.txt ] && cp requirements-eval.txt release-bundle/requirements-eval.txt || true
 
           # Include helper scripts required for evaluation workflows
           if [ -d scripts ]; then

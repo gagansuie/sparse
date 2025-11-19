@@ -1,0 +1,9 @@
+# Python dependencies for scripts/run_eval.py
+# Pin versions for reproducible evaluations.
+torch==2.4.1
+torchvision==0.19.1
+torchaudio==2.4.1
+transformers==4.44.2
+datasets==3.0.1
+sentencepiece==0.2.0
+accelerate==0.34.2
