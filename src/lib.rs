@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
@@ -26,6 +27,57 @@ pub struct FloatTensor {
     pub name: String,
     pub shape: Vec<usize>,
     pub data: Vec<f32>,
+}
+
+fn awq_debug_reconstruct(original: &FloatTensor, quantized: &QuantizedTensor) {
+    let preview = ArtifactFile {
+        version: ARTIFACT_VERSION,
+        codec: CODEC_INT4_AWQ_V1.to_string(),
+        tensors: vec![quantized.clone()],
+    };
+
+    match decompress_int4_awq(&preview) {
+        Ok(bundle) => {
+            if let Some(restored) = bundle.tensors.first() {
+                if restored.data.len() != original.data.len() {
+                    eprintln!(
+                        "[AWQ][debug] Tensor '{}': size mismatch (orig {} vs restored {})",
+                        original.name,
+                        original.data.len(),
+                        restored.data.len()
+                    );
+                    return;
+                }
+
+                let mut mse = 0.0f64;
+                let mut mae = 0.0f64;
+                let mut max_err = 0.0f32;
+                for (o, r) in original.data.iter().zip(restored.data.iter()) {
+                    let diff = (o - r).abs();
+                    mse += (diff as f64) * (diff as f64);
+                    mae += diff as f64;
+                    if diff > max_err {
+                        max_err = diff;
+                    }
+                }
+                let count = original.data.len() as f64;
+                if count > 0.0 {
+                    mse /= count;
+                    mae /= count;
+                }
+                eprintln!(
+                    "[AWQ][debug] Tensor '{}': mse={:.6} mae={:.6} max={:.6}",
+                    original.name, mse, mae, max_err
+                );
+            }
+        }
+        Err(err) => {
+            eprintln!(
+                "[AWQ][debug] Tensor '{}': failed to preview reconstruct ({})",
+                original.name, err
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -564,6 +616,10 @@ fn compress_int2_sym(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
 }
 
 fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
+    let awq_debug = env::var("TENPAK_AWQ_DEBUG")
+        .map(|v| v != "0" && !v.is_empty())
+        .unwrap_or(false);
+
     // True AWQ-style activation-aware quantization:
     // 1. Use activation stats to compute per-input-channel alphas
     // 2. Scale weights by alphas to equalize importance
@@ -784,7 +840,7 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
             }
         }
 
-        tensors_out.push(QuantizedTensor {
+        let quant_tensor = QuantizedTensor {
             name: t.name.clone(),
             shape: t.shape.clone(),
             scale: scales[0],
@@ -792,7 +848,13 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
             data: packed,
             indices: Vec::new(),
             alphas,
-        });
+        };
+
+        if awq_debug {
+            awq_debug_reconstruct(t, &quant_tensor);
+        }
+
+        tensors_out.push(quant_tensor);
     }
 
     Ok(ArtifactFile {
