@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import torch
+import torch.nn as nn
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -101,6 +102,90 @@ def bundle_to_state_dict(bundle: dict):
     return sd
 
 
+def evaluate_bundle_with_model(label, bundle, model, tokenizer, texts, device):
+    """Load bundle weights into `model`, run perplexity, then free GPU memory."""
+    print(f"[tenpak] Evaluating {label}...")
+    sd = bundle_to_state_dict(bundle)
+    model.load_state_dict(sd)
+    model.to(device)
+    ppl = compute_perplexity(model, tokenizer, texts, device)
+    model.to("cpu")
+    if isinstance(device, str) and device.startswith("cuda"):
+        torch.cuda.empty_cache()
+    del sd
+    return ppl
+
+
+def collect_activation_stats(
+    model,
+    tokenizer,
+    texts,
+    device,
+    max_batches: int = 32,
+    max_length: int = 256,
+):
+    print(
+        f"[tenpak] Collecting activation stats for AWQ calibration (samples={max_batches})..."
+    )
+    model.eval()
+    activation_sums = {}
+    activation_counts = {}
+    handles = []
+
+    def make_hook(name: str):
+        def hook(module, inputs, _output):
+            if not inputs:
+                return
+            act = inputs[0].detach()
+            if act.dim() == 1:
+                act = act.unsqueeze(0)
+            elif act.dim() > 2:
+                act = act.view(-1, act.shape[-1])
+            if act.numel() == 0:
+                return
+            mean_abs = act.abs().mean(dim=0).cpu()
+            if name not in activation_sums:
+                activation_sums[name] = mean_abs
+                activation_counts[name] = 1
+            else:
+                activation_sums[name] += mean_abs
+                activation_counts[name] += 1
+
+        return hook
+
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            handles.append(module.register_forward_hook(make_hook(name)))
+
+    calib_count = min(max_batches, len(texts))
+    for text in texts[:calib_count]:
+        enc = tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=max_length,
+        )
+        input_ids = enc["input_ids"].to(device)
+        with torch.no_grad():
+            model(input_ids)
+
+    for handle in handles:
+        handle.remove()
+
+    stats = {}
+    for name, tensor_sum in activation_sums.items():
+        count = activation_counts.get(name, 0)
+        if count == 0:
+            continue
+        mean = (tensor_sum / count).tolist()
+        stats[f"{name}.weight"] = {"activation_means": mean}
+
+    print(
+        f"[tenpak] Captured activation stats for {len(stats)} tensors using {calib_count} samples."
+    )
+    return stats
+
+
 def run_tenpak_cli(args):
     cmd = [str(TENPAK_BIN)] + args
     print(f"[tenpak] Running: {' '.join(cmd)}")
@@ -139,16 +224,29 @@ def main():
 
     # Sanity-check: rebuild model directly from the float bundle to ensure
     # state_dict⇄bundle conversion preserves perplexity before quantization.
+    # Move baseline model off GPU to reclaim memory before further evals
+    model.to("cpu")
+    if device.startswith("cuda"):
+        torch.cuda.empty_cache()
+    del model
+
     print("[tenpak] Verifying FP bundle round-trip...")
-    base_bundle_sd = bundle_to_state_dict(base_bundle)
-    model_bundle = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
-    model_bundle.load_state_dict(base_bundle_sd)
-    model_bundle.to(device)
-    ppl_bundle = compute_perplexity(model_bundle, tokenizer, texts, device)
+    eval_model = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
+    ppl_bundle = evaluate_bundle_with_model(
+        "FP bundle round-trip",
+        base_bundle,
+        eval_model,
+        tokenizer,
+        texts,
+        device,
+    )
     delta_bundle = ppl_bundle - ppl_fp
     print(
         f"[tenpak] Bundle round-trip perplexity: {ppl_bundle:.4f} (Δ {delta_bundle:+.4f} vs FP)"
     )
+    eval_model.to("cpu")
+    if device.startswith("cuda"):
+        torch.cuda.empty_cache()
 
     base_int8_artifact = TMP_DIR / "base_int8.tenpak"
     base_int4_artifact = TMP_DIR / "base_int4.tenpak"
@@ -317,54 +415,64 @@ def main():
         base_int4_g128_bundle = json.load(f)
 
     # Rebuild models from quantized bundles and compute perplexity
-    print("[tenpak] Evaluating int8 reconstructed model...")
-    int8_sd = bundle_to_state_dict(base_int8_bundle)
-    model_int8 = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
-    model_int8.load_state_dict(int8_sd)
-    model_int8.to(device)
-    ppl_int8 = compute_perplexity(model_int8, tokenizer, texts, device)
-
-    print("[tenpak] Evaluating int4 (per-tensor) reconstructed model...")
-    int4_sd = bundle_to_state_dict(base_int4_bundle)
-    model_int4 = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
-    model_int4.load_state_dict(int4_sd)
-    model_int4.to(device)
-    ppl_int4 = compute_perplexity(model_int4, tokenizer, texts, device)
-
-    print("[tenpak] Evaluating int4 (per-channel) reconstructed model...")
-    int4_perchannel_sd = bundle_to_state_dict(base_int4_perchannel_bundle)
-    model_int4_perchannel = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
-    model_int4_perchannel.load_state_dict(int4_perchannel_sd)
-    model_int4_perchannel.to(device)
-    ppl_int4_perchannel = compute_perplexity(model_int4_perchannel, tokenizer, texts, device)
-
-    print("[tenpak] Evaluating int4 (sparse 50%) reconstructed model...")
-    int4_sparse_sd = bundle_to_state_dict(base_int4_sparse_bundle)
-    model_int4_sparse = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
-    model_int4_sparse.load_state_dict(int4_sparse_sd)
-    model_int4_sparse.to(device)
-    ppl_int4_sparse = compute_perplexity(model_int4_sparse, tokenizer, texts, device)
-
-    print("[tenpak] Evaluating int2 reconstructed model...")
-    int2_sd = bundle_to_state_dict(base_int2_bundle)
-    model_int2 = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
-    model_int2.load_state_dict(int2_sd)
-    model_int2.to(device)
-    ppl_int2 = compute_perplexity(model_int2, tokenizer, texts, device)
-
-    print("[tenpak] Evaluating int4 AWQ reconstructed model...")
-    int4_awq_sd = bundle_to_state_dict(base_int4_awq_bundle)
-    model_int4_awq = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
-    model_int4_awq.load_state_dict(int4_awq_sd)
-    model_int4_awq.to(device)
-    ppl_int4_awq = compute_perplexity(model_int4_awq, tokenizer, texts, device)
-
-    print("[tenpak] Evaluating int4 g128 reconstructed model...")
-    int4_g128_sd = bundle_to_state_dict(base_int4_g128_bundle)
-    model_int4_g128 = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
-    model_int4_g128.load_state_dict(int4_g128_sd)
-    model_int4_g128.to(device)
-    ppl_int4_g128 = compute_perplexity(model_int4_g128, tokenizer, texts, device)
+    eval_model = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
+    ppl_int8 = evaluate_bundle_with_model(
+        "int8 reconstructed model",
+        base_int8_bundle,
+        eval_model,
+        tokenizer,
+        texts,
+        device,
+    )
+    ppl_int4 = evaluate_bundle_with_model(
+        "int4 (per-tensor) reconstructed model",
+        base_int4_bundle,
+        eval_model,
+        tokenizer,
+        texts,
+        device,
+    )
+    ppl_int4_perchannel = evaluate_bundle_with_model(
+        "int4 (per-channel) reconstructed model",
+        base_int4_perchannel_bundle,
+        eval_model,
+        tokenizer,
+        texts,
+        device,
+    )
+    ppl_int4_sparse = evaluate_bundle_with_model(
+        "int4 (sparse 50%) reconstructed model",
+        base_int4_sparse_bundle,
+        eval_model,
+        tokenizer,
+        texts,
+        device,
+    )
+    ppl_int2 = evaluate_bundle_with_model(
+        "int2 reconstructed model",
+        base_int2_bundle,
+        eval_model,
+        tokenizer,
+        texts,
+        device,
+    )
+    ppl_int4_awq = evaluate_bundle_with_model(
+        "int4 AWQ reconstructed model",
+        base_int4_awq_bundle,
+        eval_model,
+        tokenizer,
+        texts,
+        device,
+    )
+    ppl_int4_g128 = evaluate_bundle_with_model(
+        "int4 g128 reconstructed model",
+        base_int4_g128_bundle,
+        eval_model,
+        tokenizer,
+        texts,
+        device,
+    )
+    del eval_model
 
     compression_int8 = size_fp_bytes / size_int8_bytes if size_int8_bytes > 0 else float("nan")
     compression_int4 = size_fp_bytes / size_int4_bytes if size_int4_bytes > 0 else float("nan")

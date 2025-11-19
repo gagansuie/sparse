@@ -32,7 +32,11 @@ pub struct FloatTensor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FloatBundle {
     pub tensors: Vec<FloatTensor>,
+    #[serde(default)]
+    pub activation_stats: ActivationStats,
 }
+
+pub type ActivationStats = HashMap<String, Vec<f32>>;
 
 /// A quantized tensor: encoded values plus scale(s).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +53,9 @@ pub struct QuantizedTensor {
     /// Sparse indices (for sparse codecs). Empty for dense codecs.
     #[serde(default)]
     pub indices: Vec<u32>,
+    /// Optional per-input-channel scaling factors (for AWQ-style codecs).
+    #[serde(default)]
+    pub alphas: Vec<f32>,
 }
 
 /// On-disk artifact: versioned container for quantized tensors.
@@ -123,6 +130,7 @@ fn compress_int8_sym(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
             scales: Vec::new(),
             data: encoded,
             indices: Vec::new(),
+            alphas: Vec::new(),
         });
     }
 
@@ -175,6 +183,7 @@ fn compress_int4_sym(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
             scales: Vec::new(),
             data: packed,
             indices: Vec::new(),
+            alphas: Vec::new(),
         });
     }
 
@@ -230,6 +239,7 @@ fn compress_int4_perchannel(bundle: &FloatBundle) -> Result<ArtifactFile, String
                 scales: vec![scale], // Store as single-element vector for consistency
                 data: packed,
                 indices: Vec::new(),
+                alphas: Vec::new(),
             });
             continue;
         }
@@ -281,6 +291,7 @@ fn compress_int4_perchannel(bundle: &FloatBundle) -> Result<ArtifactFile, String
             scales,
             data: packed,
             indices: Vec::new(),
+            alphas: Vec::new(),
         });
     }
 
@@ -335,6 +346,7 @@ fn compress_int4_perchannel_sparse50(bundle: &FloatBundle) -> Result<ArtifactFil
                 scales: vec![scale],
                 data: packed,
                 indices: Vec::new(),
+                alphas: Vec::new(),
             });
             continue;
         }
@@ -416,6 +428,7 @@ fn compress_int4_perchannel_sparse50(bundle: &FloatBundle) -> Result<ArtifactFil
             scales,
             data: packed,
             indices,
+            alphas: Vec::new(),
         });
     }
 
@@ -474,6 +487,7 @@ fn compress_int2_sym(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
             scales: Vec::new(),
             data: packed,
             indices: Vec::new(),
+            alphas: Vec::new(),
         });
     }
 
@@ -532,6 +546,7 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
                 scales: vec![scale],
                 data: packed,
                 indices: Vec::new(),
+                alphas: Vec::new(),
             });
             continue;
         }
@@ -597,6 +612,7 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
             scales,
             data: packed,
             indices: Vec::new(),
+            alphas: Vec::new(),
         });
     }
 
@@ -671,6 +687,7 @@ fn compress_int4_g128(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
             scales,
             data: packed,
             indices: Vec::new(),
+            alphas: Vec::new(),
         });
     }
 
@@ -720,7 +737,10 @@ fn decompress_int8_sym(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
         });
     }
 
-    Ok(FloatBundle { tensors: out })
+    Ok(FloatBundle {
+        tensors: out,
+        activation_stats: ActivationStats::new(),
+    })
 }
 
 fn decompress_int4_sym(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
@@ -766,7 +786,10 @@ fn decompress_int4_sym(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
         });
     }
 
-    Ok(FloatBundle { tensors: out })
+    Ok(FloatBundle {
+        tensors: out,
+        activation_stats: ActivationStats::new(),
+    })
 }
 
 fn decompress_int2_sym(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
@@ -814,7 +837,10 @@ fn decompress_int2_sym(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
         });
     }
 
-    Ok(FloatBundle { tensors: out })
+    Ok(FloatBundle {
+        tensors: out,
+        activation_stats: ActivationStats::new(),
+    })
 }
 
 fn decompress_int4_perchannel(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
@@ -945,7 +971,10 @@ fn decompress_int4_perchannel(artifact: &ArtifactFile) -> Result<FloatBundle, St
         });
     }
 
-    Ok(FloatBundle { tensors: out })
+    Ok(FloatBundle {
+        tensors: out,
+        activation_stats: ActivationStats::new(),
+    })
 }
 
 fn decompress_int4_g128(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
@@ -1009,7 +1038,10 @@ fn decompress_int4_g128(artifact: &ArtifactFile) -> Result<FloatBundle, String> 
         });
     }
 
-    Ok(FloatBundle { tensors: out })
+    Ok(FloatBundle {
+        tensors: out,
+        activation_stats: ActivationStats::new(),
+    })
 }
 
 fn decompress_int4_perchannel_sparse50(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
@@ -1122,7 +1154,10 @@ fn decompress_int4_perchannel_sparse50(artifact: &ArtifactFile) -> Result<FloatB
         });
     }
 
-    Ok(FloatBundle { tensors: out })
+    Ok(FloatBundle {
+        tensors: out,
+        activation_stats: ActivationStats::new(),
+    })
 }
 
 /// Decompress a quantized artifact back into float32 tensors.
@@ -1377,7 +1412,10 @@ pub fn create_delta_artifact(
         }
     }
 
-    let delta_bundle = FloatBundle { tensors: changed };
+    let delta_bundle = FloatBundle {
+        tensors: changed,
+        activation_stats: ActivationStats::new(),
+    };
     compress_bundle_with_codec(&delta_bundle, base.codec.as_str())
 }
 
@@ -1445,6 +1483,7 @@ mod tests {
         };
         let bundle = FloatBundle {
             tensors: vec![tensor],
+            activation_stats: ActivationStats::new(),
         };
 
         let artifact = compress_bundle_with_codec(&bundle, CODEC_INT8_SYM_V1)
@@ -1478,6 +1517,7 @@ mod tests {
         };
         let bundle = FloatBundle {
             tensors: vec![bad_tensor],
+            activation_stats: ActivationStats::new(),
         };
 
         let res = compress_bundle(&bundle);
@@ -1512,6 +1552,7 @@ mod tests {
         };
         let bundle = FloatBundle {
             tensors: vec![tensor.clone()],
+            activation_stats: ActivationStats::new(),
         };
 
         let artifact = compress_bundle_with_codec(&bundle, CODEC_INT4_PERCHANNEL_V1)
@@ -1539,6 +1580,7 @@ mod tests {
         };
         let bundle = FloatBundle {
             tensors: vec![tensor.clone()],
+            activation_stats: ActivationStats::new(),
         };
 
         let artifact = compress_bundle_with_codec(&bundle, CODEC_INT4_PERCHANNEL_V1)
@@ -1560,6 +1602,7 @@ mod tests {
         };
         let bundle = FloatBundle {
             tensors: vec![tensor.clone()],
+            activation_stats: ActivationStats::new(),
         };
 
         let artifact = compress_bundle_with_codec(&bundle, CODEC_INT4_PERCHANNEL_V1)
