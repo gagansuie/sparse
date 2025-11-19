@@ -240,6 +240,46 @@ def collect_activation_stats(
     return stats
 
 
+def summarize_activation_stats(state_dict, activation_stats, quantizable_keys):
+    total = len(quantizable_keys)
+    with_stats = 0
+    dim1_match = 0
+    dim0_match = 0
+    mismatches = []
+
+    for name in quantizable_keys:
+        tensor = state_dict[name]
+        shape = list(tensor.shape)
+        stats = activation_stats.get(name)
+        if stats is None:
+            continue
+        with_stats += 1
+        if len(shape) < 2:
+            continue
+        dim0 = shape[0]
+        dim1 = shape[1]
+        stat_len = len(stats)
+        if stat_len == dim1:
+            dim1_match += 1
+        elif stat_len == dim0:
+            dim0_match += 1
+        else:
+            if len(mismatches) < 5:
+                mismatches.append((name, shape, stat_len))
+
+    print(
+        f"[tenpak] Activation stats coverage: {with_stats}/{total} tensors ({with_stats/total:.1%} coverage)"
+    )
+    if with_stats:
+        print(
+            f"         Dim1 matches: {dim1_match}, Dim0 matches: {dim0_match}, mismatches: {with_stats - dim1_match - dim0_match}"
+        )
+        if mismatches:
+            print("[tenpak] Sample stat mismatches:")
+            for name, shape, stat_len in mismatches:
+                print(f"  - {name}: shape={shape}, stats={stat_len}")
+
+
 def run_tenpak_cli(args):
     cmd = [str(TENPAK_BIN)] + args
     print(f"[tenpak] Running: {' '.join(cmd)}")
@@ -286,6 +326,7 @@ def main():
         for name in quantizable_keys
         if name in activation_stats
     }
+    summarize_activation_stats(base_sd, quant_activation_stats, quantizable_keys)
     missing_stats = [name for name in quantizable_keys if name not in quant_activation_stats]
     if missing_stats:
         print(

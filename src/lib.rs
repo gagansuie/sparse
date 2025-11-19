@@ -580,9 +580,30 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
         // Step 1: Compute per-input-channel alphas from activation stats
         let alphas: Vec<f32> = if let Some(stats) = act_stats {
             if stats.len() == in_features {
-                // Use activation magnitudes to compute alphas
-                // alpha[i] = max(act_mean[i], epsilon) to avoid division by zero
-                stats.iter().map(|&a| a.max(1e-5)).collect()
+                // Convert activation magnitudes into inverse scaling factors so
+                // high-activation channels are down-weighted before quantization.
+                const EPS: f32 = 1e-4;
+                const MIN_ALPHA: f32 = 1.0 / 16.0; // avoid over-suppression
+                const MAX_ALPHA: f32 = 16.0; // avoid excessive amplification
+
+                let mut inv_alphas: Vec<f32> = stats.iter().map(|&a| a.max(EPS)).collect();
+                let max_stat = inv_alphas.iter().cloned().fold(EPS, f32::max);
+
+                for val in &mut inv_alphas {
+                    let alpha = (max_stat / *val).clamp(MIN_ALPHA, MAX_ALPHA);
+                    *val = alpha;
+                }
+
+                // Normalize so the average alpha stays near 1.0 to avoid altering
+                // overall tensor scale dramatically.
+                let mean_alpha = inv_alphas.iter().sum::<f32>() / inv_alphas.len() as f32;
+                if mean_alpha > 0.0 {
+                    for val in &mut inv_alphas {
+                        *val /= mean_alpha;
+                    }
+                }
+
+                inv_alphas
             } else {
                 // Stats size mismatch - use uniform scaling
                 vec![1.0; in_features]
