@@ -231,7 +231,7 @@ def collect_activation_stats(
         if count == 0:
             continue
         mean = (tensor_sum / count).tolist()
-        stats[f"{name}.weight"] = mean.tolist()
+        stats[f"{name}.weight"] = mean
 
     print(
         f"[tenpak] Captured activation stats for {len(stats)} tensors using {calib_count} samples."
@@ -290,9 +290,18 @@ def main():
         print(
             f"[tenpak][warn] Missing activation stats for {len(missing_stats)} tensors; falling back to no-op alphas."
         )
+        for name in missing_stats[:5]:
+            print(f"  - {name}")
+        if len(missing_stats) > 5:
+            print(f"  ... and {len(missing_stats) - 5} more")
     print(
         f"[tenpak] Quantizing {len(quantizable_keys)} tensors (out of {len(base_sd)})"
     )
+    print(f"[tenpak] Sample quantized tensors:")
+    for name in quantizable_keys[:5]:
+        print(f"  - {name}")
+    if len(quantizable_keys) > 5:
+        print(f"  ... and {len(quantizable_keys) - 5} more")
     base_bundle = state_dict_to_bundle(
         base_sd,
         activation_stats=quant_activation_stats,
@@ -639,12 +648,15 @@ def main():
         else:
             ft_sd[name] = tensor.clone()
 
-    # Save full-precision fine-tune checkpoint
+    # Save full-precision fine-tune checkpoint (on CPU to avoid OOM)
     model_ft = AutoModelForCausalLM.from_pretrained(str(LOCAL_MODEL_DIR))
     model_ft.load_state_dict(ft_sd)
+    model_ft.to("cpu")
     FT_FP_DIR.mkdir(parents=True, exist_ok=True)
     print(f"[tenpak] Saving simulated fine-tune to {FT_FP_DIR}")
     model_ft.save_pretrained(str(FT_FP_DIR))
+    del model_ft
+    gc.collect()
 
     size_base_fp_gb = size_fp_gb
     size_ft_fp_bytes = dir_size_bytes(FT_FP_DIR)

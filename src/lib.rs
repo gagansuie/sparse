@@ -499,10 +499,11 @@ fn compress_int2_sym(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
 }
 
 fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
-    // AWQ-style activation-aware quantization:
-    // 1. Compute per-channel importance (simulated via magnitude statistics)
-    // 2. Apply per-channel scaling to preserve salient weights
-    // 3. Quantize with per-channel scales
+    // True AWQ-style activation-aware quantization:
+    // 1. Use activation stats to compute per-input-channel alphas
+    // 2. Scale weights by alphas to equalize importance
+    // 3. Quantize scaled weights with per-output-channel scales
+    // 4. Store alphas for reconstruction
 
     let mut tensors_out = Vec::with_capacity(bundle.tensors.len());
 
@@ -553,44 +554,55 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
 
         // AWQ per-channel quantization for 2D+ tensors
         let out_channels = t.shape[0];
+        let in_features = t.shape[1];
         let elements_per_channel = expected / out_channels;
 
-        // Step 1: Compute per-channel scales with improved outlier handling
-        // AWQ-style: use percentile-based clipping to reduce outlier impact
-        let mut scales = Vec::with_capacity(out_channels);
+        // Step 1: Compute per-input-channel alphas from activation stats
+        let act_stats = bundle.activation_stats.get(t.name.as_str());
+        let alphas: Vec<f32> = if let Some(stats) = act_stats {
+            if stats.len() == in_features {
+                // Use activation magnitudes to compute alphas
+                // alpha[i] = max(act_mean[i], epsilon) to avoid division by zero
+                stats.iter().map(|&a| a.max(1e-5)).collect()
+            } else {
+                vec![1.0; in_features]
+            }
+        } else {
+            vec![1.0; in_features]
+        };
 
+        // Step 2: Apply per-input-channel scaling (W' = W * diag(alpha))
+        let mut scaled_data = t.data.clone();
+        for ch in 0..out_channels {
+            let start = ch * elements_per_channel;
+            for i in 0..in_features {
+                let idx = start + i;
+                if idx < scaled_data.len() {
+                    scaled_data[idx] *= alphas[i];
+                }
+            }
+        }
+
+        // Step 3: Compute per-output-channel scales on scaled weights
+        let mut scales = Vec::with_capacity(out_channels);
         for ch in 0..out_channels {
             let start = ch * elements_per_channel;
             let end = start + elements_per_channel;
-            let channel_data = &t.data[start..end];
+            let channel_data = &scaled_data[start..end];
 
-            // Use 99.9th percentile for scale computation (clip extreme outliers)
-            let mut abs_vals: Vec<f32> = channel_data.iter().map(|v| v.abs()).collect();
-            abs_vals.sort_by(|a, b| a.partial_cmp(b).unwrap()); // ascending
-
-            // Take 99.9th percentile (0.1% outliers clipped)
-            let percentile_idx =
-                ((abs_vals.len() as f32 * 0.999).floor() as usize).min(abs_vals.len() - 1);
-            let clipped_max = abs_vals[percentile_idx];
-
-            // Scale based on clipped range (reduces outlier impact)
-            let scale = if clipped_max > 0.0 {
-                clipped_max / 7.0
-            } else {
-                1.0
-            };
+            let max_abs = channel_data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+            let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
             scales.push(scale);
         }
 
-        // Step 2: Quantize with AWQ-computed per-channel scales
-        let mut packed: Vec<u8> = Vec::with_capacity((t.data.len() + 1) / 2);
-
+        // Step 4: Quantize scaled weights
+        let mut packed: Vec<u8> = Vec::with_capacity((scaled_data.len() + 1) / 2);
         for ch in 0..out_channels {
             let inv_scale = 1.0 / scales[ch];
             let start = ch * elements_per_channel;
             let end = start + elements_per_channel;
 
-            let mut ch_iter = t.data[start..end].iter();
+            let mut ch_iter = scaled_data[start..end].iter();
             while let Some(&x0) = ch_iter.next() {
                 let v0 = (x0 * inv_scale).round().clamp(-7.0, 7.0) as i8;
                 let mut byte: u8 = (v0 as i32 & 0x0f) as u8;
@@ -612,7 +624,7 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
             scales,
             data: packed,
             indices: Vec::new(),
-            alphas: Vec::new(),
+            alphas,
         });
     }
 
@@ -977,6 +989,143 @@ fn decompress_int4_perchannel(artifact: &ArtifactFile) -> Result<FloatBundle, St
     })
 }
 
+fn decompress_int4_awq(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
+    // Decompress AWQ-quantized int4 with per-input-channel alpha unscaling
+    let mut out = Vec::with_capacity(artifact.tensors.len());
+
+    for t in &artifact.tensors {
+        let expected = expected_len(&t.shape)?;
+        if t.data.is_empty() && expected > 0 {
+            return Err(format!(
+                "Quantized tensor '{}' has no data but expected {} values",
+                t.name, expected
+            ));
+        }
+
+        // For 1D tensors, fall back to simple per-tensor decompression
+        if t.shape.len() < 2 {
+            let scale = if !t.scales.is_empty() {
+                t.scales[0]
+            } else {
+                t.scale
+            };
+
+            let mut data: Vec<f32> = Vec::with_capacity(expected);
+            'outer: for &b in &t.data {
+                let lo = decode_int4_nibble(b & 0x0f);
+                data.push(lo as f32 * scale);
+                if data.len() >= expected {
+                    break 'outer;
+                }
+                let hi = decode_int4_nibble((b >> 4) & 0x0f);
+                data.push(hi as f32 * scale);
+                if data.len() >= expected {
+                    break 'outer;
+                }
+            }
+
+            out.push(FloatTensor {
+                name: t.name.clone(),
+                shape: t.shape.clone(),
+                data,
+            });
+            continue;
+        }
+
+        // AWQ decompression for 2D+ tensors
+        let out_channels = t.shape[0];
+        let in_features = t.shape[1];
+        let elements_per_channel = expected / out_channels;
+
+        // Validate alphas
+        if t.alphas.is_empty() {
+            // No alphas stored, fall back to per-channel decompression
+            return decompress_int4_perchannel(artifact);
+        }
+
+        if t.alphas.len() != in_features {
+            return Err(format!(
+                "Tensor '{}' has {} input features but {} alphas",
+                t.name,
+                in_features,
+                t.alphas.len()
+            ));
+        }
+
+        let mut data: Vec<f32> = Vec::with_capacity(expected);
+        let mut byte_idx = 0;
+        let bytes_per_channel = (elements_per_channel + 1) / 2;
+
+        for ch in 0..out_channels {
+            let scale = if !t.scales.is_empty() {
+                t.scales[ch]
+            } else {
+                t.scale
+            };
+
+            if byte_idx + bytes_per_channel > t.data.len() {
+                return Err(format!(
+                    "Tensor '{}' has insufficient data for channel {}",
+                    t.name, ch
+                ));
+            }
+
+            let channel_bytes = &t.data[byte_idx..byte_idx + bytes_per_channel];
+            let mut produced = 0;
+            for &b in channel_bytes {
+                let lo = decode_int4_nibble(b & 0x0f);
+                let idx_in_channel = produced;
+                let alpha = if idx_in_channel < t.alphas.len() {
+                    t.alphas[idx_in_channel]
+                } else {
+                    1.0
+                };
+                // Undo alpha scaling: W = (Q * scale) / alpha
+                data.push((lo as f32 * scale) / alpha);
+                produced += 1;
+                if produced >= elements_per_channel {
+                    break;
+                }
+
+                let hi = decode_int4_nibble((b >> 4) & 0x0f);
+                let idx_in_channel = produced;
+                let alpha = if idx_in_channel < t.alphas.len() {
+                    t.alphas[idx_in_channel]
+                } else {
+                    1.0
+                };
+                data.push((hi as f32 * scale) / alpha);
+                produced += 1;
+                if produced >= elements_per_channel {
+                    break;
+                }
+            }
+
+            byte_idx += bytes_per_channel;
+        }
+
+        if data.len() != expected {
+            return Err(format!(
+                "Tensor '{}' decompressed to {} values but expected {}",
+                t.name,
+                data.len(),
+                expected
+            ));
+        }
+
+        out.push(FloatTensor {
+            name: t.name.clone(),
+            shape: t.shape.clone(),
+            data,
+        });
+    }
+
+    Ok(FloatBundle {
+        tensors: out,
+        activation_stats: ActivationStats::new(),
+    })
+}
+
 fn decompress_int4_g128(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
     // Decompress group-quantized int4 (g=128)
     const GROUP_SIZE: usize = 128;
@@ -1175,7 +1324,7 @@ pub fn decompress_bundle(artifact: &ArtifactFile) -> Result<FloatBundle, String>
         CODEC_INT4_PERCHANNEL_V1 => decompress_int4_perchannel(artifact),
         CODEC_INT4_PERCHANNEL_SPARSE50_V1 => decompress_int4_perchannel_sparse50(artifact),
         CODEC_INT2_SYM_V1 => decompress_int2_sym(artifact),
-        CODEC_INT4_AWQ_V1 => decompress_int4_perchannel(artifact), // Reuse per-channel decompression
+        CODEC_INT4_AWQ_V1 => decompress_int4_awq(artifact),
         CODEC_INT4_G128_V1 => decompress_int4_g128(artifact),
         other => Err(format!("Unsupported codec '{}'", other)),
     }
