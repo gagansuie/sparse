@@ -28,6 +28,71 @@ pub struct FloatTensor {
     pub data: Vec<f32>,
 }
 
+#[cfg(test)]
+mod awq_tests {
+    use super::*;
+
+    fn make_bundle(name: &str, shape: Vec<usize>, data: Vec<f32>, stats: Vec<f32>) -> FloatBundle {
+        let mut activation_stats = ActivationStats::new();
+        activation_stats.insert(name.to_string(), stats);
+        FloatBundle {
+            tensors: vec![FloatTensor {
+                name: name.to_string(),
+                shape,
+                data,
+            }],
+            activation_stats,
+        }
+    }
+
+    fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
+        a.iter()
+            .zip(b.iter())
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn awq_round_trip_standard_layout() {
+        let name = "linear.weight";
+        let shape = vec![3, 5];
+        let data: Vec<f32> = (0..15).map(|i| ((i as f32) * 0.11).sin()).collect();
+        let stats: Vec<f32> = (0..shape[1]).map(|i| 0.1 + (i as f32) * 0.02).collect();
+        let bundle = make_bundle(name, shape.clone(), data.clone(), stats);
+
+        let artifact =
+            compress_bundle_with_codec(&bundle, CODEC_INT4_AWQ_V1).expect("compress int4_awq");
+        let restored = decompress_int4_awq(&artifact).expect("decompress int4_awq");
+        let restored_tensor = &restored.tensors[0];
+        assert_eq!(restored_tensor.shape, shape);
+        assert!(
+            max_abs_diff(&restored_tensor.data, &data) < 0.15,
+            "max abs diff too large"
+        );
+    }
+
+    #[test]
+    fn awq_round_trip_transposed_layout() {
+        let name = "conv1d.weight";
+        // Simulate Conv1D stored as [in, out]
+        let shape = vec![4, 6];
+        let data: Vec<f32> = (0..24).map(|i| ((i as f32) * 0.07).cos()).collect();
+        // Stats length matches first dimension to trigger transposed path
+        let stats: Vec<f32> = (0..shape[0]).map(|i| 0.05 + (i as f32) * 0.01).collect();
+        let bundle = make_bundle(name, shape.clone(), data.clone(), stats);
+
+        let artifact =
+            compress_bundle_with_codec(&bundle, CODEC_INT4_AWQ_V1).expect("compress int4_awq");
+        let restored = decompress_int4_awq(&artifact).expect("decompress int4_awq");
+        let restored_tensor = &restored.tensors[0];
+        assert_eq!(restored_tensor.shape, shape);
+        assert!(
+            max_abs_diff(&restored_tensor.data, &data) < 0.2,
+            "max abs diff too large"
+        );
+    }
+}
+
 /// A bundle of named tensors representing a model checkpoint fragment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FloatBundle {
