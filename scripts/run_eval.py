@@ -207,7 +207,8 @@ def collect_activation_stats(
         return hook
 
     for name, module in model.named_modules():
-        if isinstance(module, nn.Linear):
+        # GPT-2 uses Conv1D for linear layers
+        if isinstance(module, nn.Linear) or module.__class__.__name__ == 'Conv1D':
             handles.append(module.register_forward_hook(make_hook(name)))
 
     calib_count = min(max_batches, len(texts))

@@ -553,67 +553,148 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
         }
 
         // AWQ per-channel quantization for 2D+ tensors
-        let out_channels = t.shape[0];
-        let in_features = t.shape[1];
+        // Activation stats represent input features. We need to determine which dimension
+        // of the weight tensor corresponds to input features.
+        // - Standard Linear: weights are [out_features, in_features]
+        // - Conv1D (GPT-2): weights are [in_features, out_features] (transposed)
+        let act_stats = bundle.activation_stats.get(t.name.as_str());
+
+        // Determine weight layout by matching activation stats size to tensor dimensions
+        let (out_channels, in_features, is_transposed) = if let Some(stats) = act_stats {
+            if stats.len() == t.shape[0] {
+                // Activation stats match first dimension -> transposed layout (Conv1D)
+                (t.shape[1], t.shape[0], true)
+            } else if stats.len() == t.shape[1] {
+                // Activation stats match second dimension -> standard layout
+                (t.shape[0], t.shape[1], false)
+            } else {
+                // Stats don't match either dimension - fall back to standard layout
+                (t.shape[0], t.shape[1], false)
+            }
+        } else {
+            // No activation stats - assume standard layout
+            (t.shape[0], t.shape[1], false)
+        };
         let elements_per_channel = expected / out_channels;
 
         // Step 1: Compute per-input-channel alphas from activation stats
-        let act_stats = bundle.activation_stats.get(t.name.as_str());
         let alphas: Vec<f32> = if let Some(stats) = act_stats {
             if stats.len() == in_features {
                 // Use activation magnitudes to compute alphas
                 // alpha[i] = max(act_mean[i], epsilon) to avoid division by zero
                 stats.iter().map(|&a| a.max(1e-5)).collect()
             } else {
+                // Stats size mismatch - use uniform scaling
                 vec![1.0; in_features]
             }
         } else {
+            // No activation stats - use uniform scaling
             vec![1.0; in_features]
         };
 
         // Step 2: Apply per-input-channel scaling (W' = W * diag(alpha))
         let mut scaled_data = t.data.clone();
-        for ch in 0..out_channels {
-            let start = ch * elements_per_channel;
-            for i in 0..in_features {
-                let idx = start + i;
-                if idx < scaled_data.len() {
-                    scaled_data[idx] *= alphas[i];
+        if is_transposed {
+            // Transposed layout: data is [in_features, out_features]
+            // Each input channel is a row, so we scale entire rows
+            for in_ch in 0..in_features {
+                let start = in_ch * out_channels;
+                let alpha = alphas[in_ch];
+                for out_ch in 0..out_channels {
+                    let idx = start + out_ch;
+                    if idx < scaled_data.len() {
+                        scaled_data[idx] *= alpha;
+                    }
+                }
+            }
+        } else {
+            // Standard layout: data is [out_channels, in_features]
+            for ch in 0..out_channels {
+                let start = ch * elements_per_channel;
+                for i in 0..in_features {
+                    let idx = start + i;
+                    if idx < scaled_data.len() {
+                        scaled_data[idx] *= alphas[i];
+                    }
                 }
             }
         }
 
         // Step 3: Compute per-output-channel scales on scaled weights
         let mut scales = Vec::with_capacity(out_channels);
-        for ch in 0..out_channels {
-            let start = ch * elements_per_channel;
-            let end = start + elements_per_channel;
-            let channel_data = &scaled_data[start..end];
-
-            let max_abs = channel_data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
-            let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
-            scales.push(scale);
+        if is_transposed {
+            // Transposed: output channels are columns
+            for out_ch in 0..out_channels {
+                let mut max_abs = 0.0_f32;
+                for in_ch in 0..in_features {
+                    let idx = in_ch * out_channels + out_ch;
+                    if idx < scaled_data.len() {
+                        max_abs = max_abs.max(scaled_data[idx].abs());
+                    }
+                }
+                let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
+                scales.push(scale);
+            }
+        } else {
+            // Standard: output channels are rows
+            for ch in 0..out_channels {
+                let start = ch * elements_per_channel;
+                let end = start + elements_per_channel;
+                let channel_data = &scaled_data[start..end];
+                let max_abs = channel_data.iter().map(|v| v.abs()).fold(0.0_f32, f32::max);
+                let scale = if max_abs > 0.0 { max_abs / 7.0 } else { 1.0 };
+                scales.push(scale);
+            }
         }
 
         // Step 4: Quantize scaled weights
         let mut packed: Vec<u8> = Vec::with_capacity((scaled_data.len() + 1) / 2);
-        for ch in 0..out_channels {
-            let inv_scale = 1.0 / scales[ch];
-            let start = ch * elements_per_channel;
-            let end = start + elements_per_channel;
+        if is_transposed {
+            // Transposed: quantize column by column
+            for out_ch in 0..out_channels {
+                let inv_scale = 1.0 / scales[out_ch];
+                for in_ch in 0..in_features {
+                    let idx = in_ch * out_channels + out_ch;
+                    if idx >= scaled_data.len() {
+                        break;
+                    }
+                    let x = scaled_data[idx];
+                    let v = (x * inv_scale).round().clamp(-7.0, 7.0) as i8;
 
-            let mut ch_iter = scaled_data[start..end].iter();
-            while let Some(&x0) = ch_iter.next() {
-                let v0 = (x0 * inv_scale).round().clamp(-7.0, 7.0) as i8;
-                let mut byte: u8 = (v0 as i32 & 0x0f) as u8;
-
-                if let Some(&x1) = ch_iter.next() {
-                    let v1 = (x1 * inv_scale).round().clamp(-7.0, 7.0) as i8;
-                    let hi = ((v1 as i32 & 0x0f) as u8) << 4;
-                    byte |= hi;
+                    if (in_ch % 2) == 0 {
+                        // Low nibble
+                        packed.push((v as i32 & 0x0f) as u8);
+                    } else {
+                        // High nibble - combine with previous byte
+                        let last_idx = packed.len() - 1;
+                        packed[last_idx] |= ((v as i32 & 0x0f) as u8) << 4;
+                    }
                 }
+                // Pad if odd number of elements
+                if in_features % 2 == 1 {
+                    // Already have low nibble, high nibble is implicitly 0
+                }
+            }
+        } else {
+            // Standard: quantize row by row
+            for ch in 0..out_channels {
+                let inv_scale = 1.0 / scales[ch];
+                let start = ch * elements_per_channel;
+                let end = start + elements_per_channel;
 
-                packed.push(byte);
+                let mut ch_iter = scaled_data[start..end].iter();
+                while let Some(&x0) = ch_iter.next() {
+                    let v0 = (x0 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                    let mut byte: u8 = (v0 as i32 & 0x0f) as u8;
+
+                    if let Some(&x1) = ch_iter.next() {
+                        let v1 = (x1 * inv_scale).round().clamp(-7.0, 7.0) as i8;
+                        let hi = ((v1 as i32 & 0x0f) as u8) << 4;
+                        byte |= hi;
+                    }
+
+                    packed.push(byte);
+                }
             }
         }
 
@@ -1033,15 +1114,21 @@ fn decompress_int4_awq(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
         }
 
         // AWQ decompression for 2D+ tensors
-        let out_channels = t.shape[0];
-        let in_features = t.shape[1];
-        let elements_per_channel = expected / out_channels;
-
         // Validate alphas
         if t.alphas.is_empty() {
             // No alphas stored, fall back to per-channel decompression
             return decompress_int4_perchannel(artifact);
         }
+
+        // Detect transposed layout based on alphas matching first dimension
+        let is_transposed = t.alphas.len() == t.shape[0];
+
+        let (out_channels, in_features) = if is_transposed {
+            (t.shape[1], t.shape[0])
+        } else {
+            (t.shape[0], t.shape[1])
+        };
+        let elements_per_channel = expected / out_channels;
 
         if t.alphas.len() != in_features {
             return Err(format!(
@@ -1053,55 +1140,103 @@ fn decompress_int4_awq(artifact: &ArtifactFile) -> Result<FloatBundle, String> {
         }
 
         let mut data: Vec<f32> = Vec::with_capacity(expected);
-        let mut byte_idx = 0;
-        let bytes_per_channel = (elements_per_channel + 1) / 2;
 
-        for ch in 0..out_channels {
-            let scale = if !t.scales.is_empty() {
-                t.scales[ch]
-            } else {
-                t.scale
-            };
-
-            if byte_idx + bytes_per_channel > t.data.len() {
-                return Err(format!(
-                    "Tensor '{}' has insufficient data for channel {}",
-                    t.name, ch
-                ));
-            }
-
-            let channel_bytes = &t.data[byte_idx..byte_idx + bytes_per_channel];
-            let mut produced = 0;
-            for &b in channel_bytes {
-                let lo = decode_int4_nibble(b & 0x0f);
-                let idx_in_channel = produced;
-                let alpha = if idx_in_channel < t.alphas.len() {
-                    t.alphas[idx_in_channel]
+        if is_transposed {
+            // Transposed: dequantize column by column, then undo alpha scaling
+            let mut byte_idx = 0;
+            for out_ch in 0..out_channels {
+                let scale = if !t.scales.is_empty() {
+                    t.scales[out_ch]
                 } else {
-                    1.0
+                    t.scale
                 };
-                // Undo alpha scaling: W = (Q * scale) / alpha
-                data.push((lo as f32 * scale) / alpha);
-                produced += 1;
-                if produced >= elements_per_channel {
-                    break;
+
+                // Temporary storage for this column
+                let mut column = Vec::with_capacity(in_features);
+                for in_ch in 0..in_features {
+                    let nibble_idx = in_ch;
+                    let byte_offset = nibble_idx / 2;
+                    let is_low = (nibble_idx % 2) == 0;
+
+                    if byte_idx + byte_offset >= t.data.len() {
+                        return Err(format!(
+                            "Tensor '{}' has insufficient data for Conv1D decompression",
+                            t.name
+                        ));
+                    }
+
+                    let b = t.data[byte_idx + byte_offset];
+                    let nibble = if is_low { b & 0x0f } else { (b >> 4) & 0x0f };
+                    let quantized = decode_int4_nibble(nibble);
+                    let scaled = quantized as f32 * scale;
+                    let alpha = t.alphas[in_ch];
+                    column.push(scaled / alpha);
                 }
 
-                let hi = decode_int4_nibble((b >> 4) & 0x0f);
-                let idx_in_channel = produced;
-                let alpha = if idx_in_channel < t.alphas.len() {
-                    t.alphas[idx_in_channel]
-                } else {
-                    1.0
-                };
-                data.push((hi as f32 * scale) / alpha);
-                produced += 1;
-                if produced >= elements_per_channel {
-                    break;
+                // Advance byte index for next column
+                byte_idx += (in_features + 1) / 2;
+
+                // Append column to data (in row-major order for Conv1D [in, out])
+                for (in_ch, &val) in column.iter().enumerate() {
+                    let idx = in_ch * out_channels + out_ch;
+                    while data.len() <= idx {
+                        data.push(0.0);
+                    }
+                    data[idx] = val;
                 }
             }
+        } else {
+            // Standard layout: dequantize row by row
+            let mut byte_idx = 0;
+            let bytes_per_channel = (elements_per_channel + 1) / 2;
 
-            byte_idx += bytes_per_channel;
+            for ch in 0..out_channels {
+                let scale = if !t.scales.is_empty() {
+                    t.scales[ch]
+                } else {
+                    t.scale
+                };
+
+                if byte_idx + bytes_per_channel > t.data.len() {
+                    return Err(format!(
+                        "Tensor '{}' has insufficient data for channel {}",
+                        t.name, ch
+                    ));
+                }
+
+                let channel_bytes = &t.data[byte_idx..byte_idx + bytes_per_channel];
+                let mut produced = 0;
+                for &b in channel_bytes {
+                    let lo = decode_int4_nibble(b & 0x0f);
+                    let idx_in_channel = produced;
+                    let alpha = if idx_in_channel < t.alphas.len() {
+                        t.alphas[idx_in_channel]
+                    } else {
+                        1.0
+                    };
+                    // Undo alpha scaling: W = (Q * scale) / alpha
+                    data.push((lo as f32 * scale) / alpha);
+                    produced += 1;
+                    if produced >= elements_per_channel {
+                        break;
+                    }
+
+                    let hi = decode_int4_nibble((b >> 4) & 0x0f);
+                    let idx_in_channel = produced;
+                    let alpha = if idx_in_channel < t.alphas.len() {
+                        t.alphas[idx_in_channel]
+                    } else {
+                        1.0
+                    };
+                    data.push((hi as f32 * scale) / alpha);
+                    produced += 1;
+                    if produced >= elements_per_channel {
+                        break;
+                    }
+                }
+
+                byte_idx += bytes_per_channel;
+            }
         }
 
         if data.len() != expected {
