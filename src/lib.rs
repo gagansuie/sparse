@@ -701,28 +701,23 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
         // Step 1: Compute per-input-channel alphas from activation stats
         let alphas: Vec<f32> = if let Some(stats) = act_stats {
             if stats.len() == in_features {
-                // Convert activation magnitudes into scaling factors in (0, 1].
-                // High-activation channels get smaller alphas (shrunk before quantizing).
+                // Derive alphas from mean-relative inverse activations: channels with
+                // larger activation magnitudes get smaller alphas (<1), while low-activation
+                // channels get >1 up to MAX_ALPHA. This mirrors the AWQ heuristic.
                 const EPS: f32 = 1e-4;
-                const MIN_ALPHA: f32 = 1.0 / 16.0;
+                const MAX_ALPHA: f32 = 8.0;
+                const MIN_ALPHA: f32 = 1.0 / MAX_ALPHA;
 
-                let mut alphas: Vec<f32> = stats.iter().map(|&a| a.max(EPS)).collect();
-                let max_stat = alphas.iter().cloned().fold(EPS, f32::max);
+                let cleaned: Vec<f32> = stats.iter().map(|&a| a.max(EPS)).collect();
+                let mean_stat = cleaned.iter().sum::<f32>() / cleaned.len() as f32;
 
-                for val in &mut alphas {
-                    let alpha = (*val / max_stat).clamp(MIN_ALPHA, 1.0);
-                    *val = alpha;
-                }
-
-                // Normalize so the mean alpha is ~1.0 to preserve global scale.
-                let mean_alpha = alphas.iter().sum::<f32>() / alphas.len() as f32;
-                if mean_alpha > 0.0 {
-                    for val in &mut alphas {
-                        *val /= mean_alpha;
-                    }
-                }
-
-                alphas
+                cleaned
+                    .into_iter()
+                    .map(|stat| {
+                        let ratio = mean_stat / stat;
+                        ratio.clamp(MIN_ALPHA, MAX_ALPHA)
+                    })
+                    .collect()
             } else {
                 // Stats size mismatch - use uniform scaling
                 vec![1.0; in_features]
