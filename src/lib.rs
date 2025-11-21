@@ -701,30 +701,28 @@ fn compress_int4_awq(bundle: &FloatBundle) -> Result<ArtifactFile, String> {
         // Step 1: Compute per-input-channel alphas from activation stats
         let alphas: Vec<f32> = if let Some(stats) = act_stats {
             if stats.len() == in_features {
-                // Convert activation magnitudes into inverse scaling factors so
-                // high-activation channels are down-weighted before quantization.
+                // Convert activation magnitudes into scaling factors in (0, 1].
+                // High-activation channels get smaller alphas (shrunk before quantizing).
                 const EPS: f32 = 1e-4;
-                const MIN_ALPHA: f32 = 1.0 / 16.0; // avoid over-suppression
-                const MAX_ALPHA: f32 = 16.0; // avoid excessive amplification
+                const MIN_ALPHA: f32 = 1.0 / 16.0;
 
-                let mut inv_alphas: Vec<f32> = stats.iter().map(|&a| a.max(EPS)).collect();
-                let max_stat = inv_alphas.iter().cloned().fold(EPS, f32::max);
+                let mut alphas: Vec<f32> = stats.iter().map(|&a| a.max(EPS)).collect();
+                let max_stat = alphas.iter().cloned().fold(EPS, f32::max);
 
-                for val in &mut inv_alphas {
-                    let alpha = (max_stat / *val).clamp(MIN_ALPHA, MAX_ALPHA);
+                for val in &mut alphas {
+                    let alpha = (*val / max_stat).clamp(MIN_ALPHA, 1.0);
                     *val = alpha;
                 }
 
-                // Normalize so the average alpha stays near 1.0 to avoid altering
-                // overall tensor scale dramatically.
-                let mean_alpha = inv_alphas.iter().sum::<f32>() / inv_alphas.len() as f32;
+                // Normalize so the mean alpha is ~1.0 to preserve global scale.
+                let mean_alpha = alphas.iter().sum::<f32>() / alphas.len() as f32;
                 if mean_alpha > 0.0 {
-                    for val in &mut inv_alphas {
+                    for val in &mut alphas {
                         *val /= mean_alpha;
                     }
                 }
 
-                inv_alphas
+                alphas
             } else {
                 // Stats size mismatch - use uniform scaling
                 vec![1.0; in_features]
