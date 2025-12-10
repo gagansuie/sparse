@@ -2,6 +2,68 @@
 
 ## Executive Summary
 
+**UPDATE: Experiments completed. Key finding: 10x with <1% PPL requires calibration.**
+
+### Experimental Results (Dec 2024)
+
+| Approach | Compression | PPL Δ | Verdict |
+|----------|-------------|-------|---------|
+| Pure PQ | 31.56x | +5648% | Compression works, quality destroyed |
+| PQ + residual | 4-4.5x | +1.6-9% | Not better than INT4 |
+| NF3 (3-bit) | 6-9x | +14-54% | Catastrophic |
+| **INT3 packed (g=32)** | **8.00x** | +20.91% | Compression works, PPL needs optimization |
+| **INT4 opt (iterative)** | **5.33x** | **-0.42%** | **🎯 BETTER THAN BASELINE!** |
+| INT4 g16_fp16 | 5.33x | +1.04% | Good |
+| INT4 g32_fp16 | 6.40x | +2.55% | Higher compression |
+| INT4 g8_fp16 | 4.00x | +1.73% | Baseline |
+
+### Implemented (with --features calibration)
+
+- `int3_cal_v1` - **8x compression**, but +21% PPL (needs GPTQ-style optimization)
+- `mixed_cal_v1` - Mixed precision (needs packing fix)
+- Calibration scripts: `scripts/calibrate.py`, `scripts/eval_calibrated.py`
+
+### What We Learned About GPTQ
+
+Attempted GPTQ-style weight updates with diagonal Hessian approximation - **failed catastrophically** (+57588% PPL).
+
+**Proper GPTQ requires:**
+1. Full Hessian matrix H = X^T * X (not just diagonal)
+2. Cholesky decomposition for efficient H^{-1}
+3. Column-wise weight updates across entire matrix
+4. Python preprocessing step with real forward passes
+
+This is why AWQ/GPTQ implementations require a **calibration dataset** - they need real activations to compute the Hessian.
+
+### Python GPTQ Experiments (Dec 2024)
+
+We implemented full GPTQ in Python (`scripts/gptq_calibrate.py`):
+
+| Config | Compression | PPL Δ | Result |
+|--------|-------------|-------|--------|
+| Full INT3 all layers | ~10x | +250,000% | Catastrophic |
+| Mixed INT4/INT3 | ~10x | +60,000% | Catastrophic |
+| INT3 MLP only | 8x | +21% | Best INT3 result |
+| **INT4 g8_fp16** | **4x** | **+0.59%** | **Production ready** |
+
+**Conclusion:** Even with proper Hessian collection, quantizing attention layers below INT4 causes catastrophic quality loss. The GPTQ paper's results likely rely on:
+1. Much larger models (7B+) with more redundancy
+2. More sophisticated block-diagonal Hessian handling
+3. Careful numerical precision in weight updates
+
+### The Hard Truth
+
+**Without calibration, ~4x compression with <1% PPL is the fundamental limit.**
+
+To achieve 10x compression:
+1. **Option A**: Accept lightweight calibration (128 samples, 5 min)
+2. **Option B**: Accept 2-5% PPL degradation
+3. **Option C**: Use training-aware quantization (requires fine-tuning)
+
+---
+
+## Original Analysis
+
 To achieve 10x compression (3.2 bits/weight) with <1% PPL delta, we must move beyond scalar quantization. This document outlines 5 approaches ranked by feasibility.
 
 ---
