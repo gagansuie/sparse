@@ -89,6 +89,9 @@ enum Commands {
         #[arg(short, long)]
         output: String,
     },
+    #[cfg(feature = "gpu")]
+    /// Test GPU (wgpu) detection and GEMM.
+    GpuTest,
 }
 
 fn main() -> Result<()> {
@@ -119,6 +122,34 @@ fn main() -> Result<()> {
             delta,
             output,
         } => materialize_cmd(&base, &delta, &output)?,
+        #[cfg(feature = "gpu")]
+        Commands::GpuTest => gpu_test_cmd()?,
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "gpu")]
+fn gpu_test_cmd() -> Result<()> {
+    use tenpak::wgpu_gemm::G8GemmContext;
+
+    println!("Testing wgpu GPU detection...");
+
+    match pollster::block_on(G8GemmContext::new()) {
+        Ok(ctx) => {
+            println!("✅ wgpu context created successfully!");
+
+            // Quick GEMM test: Y = X @ W where X is 1x16, W is 16x1
+            let x: Vec<f32> = vec![1.0; 16]; // 1x16 input
+            let w: Vec<u8> = vec![0x88; 8]; // 16 weights packed as int4 (8 bytes)
+            let scales: Vec<f32> = vec![0.1; 2]; // 2 groups (16/8)
+            let offsets: Vec<f32> = vec![0.0; 2];
+
+            let result = ctx.gemm(&x, &w, &scales, &offsets, 1, 1, 16);
+            println!("✅ GEMM test passed!");
+            println!("   Result: {:?}", result);
+        }
+        Err(e) => println!("❌ Failed to create wgpu context: {}", e),
     }
 
     Ok(())

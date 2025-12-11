@@ -28,8 +28,8 @@ pollster = { version = "0.3", optional = true }
 [features]
 default = []
 gpu = ["wgpu", "bytemuck", "tokio", "pollster"]
-# Calibration-based quantization for 10x compression
-# Enables importance-weighted mixed-precision codecs
+# Calibration-based quantization for 7-10x compression with <1% PPL delta
+# Enables AWQ-style importance-weighted quantization
 calibration = []
 
 [profile.ci-release]

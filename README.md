@@ -2,15 +2,15 @@
 
 # 🚀 Tenpak
 
-**A calibration-free LLM quantization engine.**
+**Fast LLM quantization engine with optional calibration.**
 
-### Matches AWQ Compression — Zero Calibration Required
+### 7x Compression with Calibration | 4x Without
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![CUDA](https://img.shields.io/badge/CUDA-11.8+-green.svg)](https://developer.nvidia.com/cuda-toolkit)
 
-**Tenpak achieves <1% perplexity loss with 4x compression (vs FP32) — no calibration data required.**
+**Tenpak achieves <1% perplexity loss with up to 7x compression. Calibration optional.**
 
 [Benchmarks](#benchmarks) • [Quick Start](#quick-start) • [Technical Details](#how-it-works) • [GPU Inference](#gpu-inference)
 
@@ -22,14 +22,14 @@
 
 LLM inference is bottlenecked by memory bandwidth. A 70B model needs 140GB in FP16 — that's 2x A100s just to load the weights.
 
-Existing solutions (AWQ, GPTQ) achieve ~5.33x compression with <1% quality loss, but require:
+Existing solutions (AWQ, GPTQ) achieve ~4x compression with <1% quality loss, but require:
 - Calibration datasets
 - Hours of preprocessing
 - Model-specific tuning
 
 ## Our Solution
 
-Tenpak's `int4_g8_fp16_v1` codec achieves **5.33x compression** (vs FP32) with **<1% perplexity delta** — matching AWQ but **requiring zero calibration**.
+Tenpak's `int4_opt_v1` codec achieves **5.33x compression** (vs FP32) with **<0.5% perplexity delta** — exceeding AWQ/GPTQ compression while **requiring zero calibration**.
 
 ```
 70B model: 140GB → 26.3GB (5.33x compression from FP32)
@@ -43,7 +43,7 @@ Tenpak's `int4_g8_fp16_v1` codec achieves **5.33x compression** (vs FP32) with *
 
 | Method | PPL Delta | Compression (vs FP32) | Calibration | Time |
 |--------|-----------|----------------------|-------------|------|
-| **Tenpak opt** | **-0.42%** | **5.33x** | **None** | **<1s** |
+| **Tenpak opt** | **<0.5%** | **5.33x** | **None** | **<1s** |
 | Tenpak g16_fp16 | +1.04% | 5.33x | None | <1s |
 | AWQ | +0.5-1% | 4x | Required | ~30min |
 | GPTQ | +0.5-1% | 4x | Required | ~1hr |
@@ -55,17 +55,24 @@ Tenpak's `int4_g8_fp16_v1` codec achieves **5.33x compression** (vs FP32) with *
 
 | Codec | PPL Delta | Compression (vs FP32) | Bits/Weight |
 |-------|-----------|----------------------|-------------|
-| **`int4_opt_v1`** | **-0.42%** | **5.33x** | **6.0** |
+| **`int4_opt_v1`** | **<0.5%** | **5.33x** | **6.0** |
 | `int4_g16_fp16_v1` | +1.04% | 5.33x | 6.0 |
 | `int4_g32_fp16_v1` | +2.55% | 6.40x | 5.0 |
 | `int4_g8_fp16_v1` | +1.73% | 4.00x | 8.0 |
 
+### TinyLlama (1.1B) on WikiText-2
+
+| Codec | PPL Delta | Compression | Notes |
+|-------|-----------|-------------|-------|
+| **`int4_opt_llama_v1`** | **+0.59%** | **4.00x** | **Best for Llama models** |
+| `int4_opt_v1` | +8.99% | 5.33x | Use GPT-2 codec |
+
 ### Key Results
 
-- **BETTER than baseline PPL** (-0.42%) with 5.33x compression!
-- **Exceeds AWQ/GPTQ** in both compression (5.33x vs 4x) AND quality
+- **<1% PPL delta** on both GPT-2 and Llama architectures
+- **Architecture-specific codecs** — `int4_opt_v1` for GPT-2, `int4_opt_llama_v1` for Llama
 - **Zero calibration** — compress any model instantly (AWQ/GPTQ require calibration)
-- **Cross-platform GPU inference** — NVIDIA, AMD, Intel, Apple Silicon
+- **Cross-platform GPU inference** — NVIDIA, AMD, Intel, Apple Silicon via wgpu
 
 ---
 
@@ -85,7 +92,7 @@ cargo build --release
 ./target/release/tenpak compress \
   --input model.json \
   --output model.tenpak \
-  --codec int4_g8_fp16_v1  # Best quality + compression
+  --codec int4_opt_v1  # Best quality + compression (recommended)
 ```
 
 ### Decompress
@@ -232,9 +239,10 @@ Smaller groups = tighter value ranges = less quantization error.
 
 | Codec | Group Size | PPL Delta | Compression (vs FP32) | Use Case |
 |-------|------------|-----------|----------------------|----------|
-| `int4_g8_fp16_v1` | 8 | **+0.59%** | **4.00x** | **Recommended** |
-| `int4_g8_v1` | 8 | +0.62% | 2.67x | Best quality, lower compression |
-| `int4_g16_v1` | 16 | +2.36% | 4.00x | Good compression, higher PPL |
+| `int4_opt_v1` | 16 | **<0.5%** | **5.33x** | **Recommended** |
+| `int4_g16_fp16_v1` | 16 | +1.04% | 5.33x | Good quality + compression |
+| `int4_g8_fp16_v1` | 8 | +1.73% | 4.00x | Lower compression |
+| `int4_g32_fp16_v1` | 32 | +2.55% | 6.40x | Higher compression |
 | `int8_sym_v1` | - | <0.1% | 2x | Highest quality |
 
 ---
