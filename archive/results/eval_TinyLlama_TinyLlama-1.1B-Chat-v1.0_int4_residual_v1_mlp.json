@@ -1,0 +1,13 @@
+{
+  "timestamp": "2025-12-12T14:48:32.860368",
+  "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "codec": "int4_residual_v1",
+  "layers": "mlp",
+  "compression": 3.1999689547605588,
+  "baseline_ppl": 6.8503947257995605,
+  "quant_ppl": 6.867579460144043,
+  "ppl_delta_percent": 0.25085757875764836,
+  "passed": true,
+  "max_samples": 30,
+  "low_memory": false
+}

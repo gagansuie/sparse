@@ -1,5 +1,20 @@
+# Rust
 /target/
 **/*.rs.bk
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+*.egg
+
+# IDE
 *.swp
 *.swo
 *~
@@ -8,10 +23,17 @@
 *.iml
 .vscode/
 .DS_Store
+
+# Logs
 *.log
+
+# Project-specific
 /.tenpak-eval-venv/
 /models/
 /tmp_eval/
-/dist/
 /.tenpak-scripts-tmp/
 tenpak*.tar.gz
+/offload_tmp/
+
+# Archive (old experiments - keep in git but ignore changes)
+# archive/

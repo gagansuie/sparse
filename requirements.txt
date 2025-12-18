@@ -1,0 +1,10 @@
+# TenPak Core Dependencies
+torch>=2.0.0
+transformers>=4.30.0
+datasets>=2.14.0
+tqdm>=4.65.0
+
+# API Dependencies (optional, install with pip install -e ".[api]")
+# fastapi>=0.100.0
+# uvicorn>=0.23.0
+# pydantic>=2.0.0

@@ -1,0 +1,13 @@
+{
+  "timestamp": "2025-12-12T16:27:41.505137",
+  "model": "gpt2",
+  "codec": "tenpak_x_v1",
+  "layers": "mlp",
+  "compression": 4.081228280020917,
+  "baseline_ppl": 25.276023864746094,
+  "quant_ppl": 25.28281021118164,
+  "ppl_delta_percent": 0.02684894772952077,
+  "passed": true,
+  "max_samples": 30,
+  "low_memory": false
+}

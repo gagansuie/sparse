@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tenpak::{
     compress_bundle_with_codec, create_delta_artifact, decompress_bundle, materialize_artifact,
-    Artifact, Bundle, CODEC_INT4_SYM_V1, CODEC_INT8_SYM_V1,
+    Artifact, Bundle, CODEC_INT4_RESIDUAL_V1,
 };
 
 /// 10pak CLI: compress and decompress simple tensor bundles.
@@ -25,8 +25,8 @@ enum Commands {
         /// Output binary file for the compressed artifact
         #[arg(short, long)]
         output: String,
-        /// Codec to use (e.g., int8_sym_v1, int4_sym_v1)
-        #[arg(long, default_value = CODEC_INT8_SYM_V1)]
+        /// Codec to use (recommended: int4_residual_v1, int4_opt_llama_v1)
+        #[arg(long, default_value = CODEC_INT4_RESIDUAL_V1)]
         codec: String,
     },
     /// Decompress a binary 10pak artifact back into a JSON bundle.
@@ -165,7 +165,7 @@ struct Candidate {
 }
 
 fn evaluate_codecs(bundle: &Bundle) -> Result<Vec<Candidate>> {
-    let codecs = [CODEC_INT8_SYM_V1, CODEC_INT4_SYM_V1];
+    let codecs = [CODEC_INT4_RESIDUAL_V1];
     let mut candidates: Vec<Candidate> = Vec::new();
 
     for &codec in &codecs {

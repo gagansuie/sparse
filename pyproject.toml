@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tenpak"
+version = "0.1.0"
+description = "Model compression for LLMs - 7x+ compression with <2% quality loss"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "TenPak Team"}
+]
+keywords = ["llm", "compression", "quantization", "machine-learning", "transformers"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "datasets>=2.14.0",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "pydantic>=2.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.0.280",
+]
+all = ["tenpak[api,dev]"]
+
+[project.scripts]
+tenpak = "cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/gagansuie/tenpak"
+Documentation = "https://github.com/gagansuie/tenpak#readme"
+Repository = "https://github.com/gagansuie/tenpak"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core", "core.*", "studio", "studio.*", "cli", "cli.*", "optimizer", "optimizer.*", "artifact", "artifact.*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
