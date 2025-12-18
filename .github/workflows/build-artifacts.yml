@@ -1,168 +1,90 @@
-name: Build and Upload Artifacts
+name: CI/CD
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  determine-release:
-    name: Determine release version
+  test:
+    name: Test
     runs-on: ubuntu-latest
-    outputs:
-      release_needed: ${{ steps.evaluate.outputs.release_needed }}
-      version: ${{ steps.evaluate.outputs.version }}
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
         with:
-          fetch-depth: 0
-
-      - name: Detect version change
-        id: evaluate
-        shell: bash
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      
+      - name: Install dependencies
         run: |
-          set -euxo pipefail
-          git fetch --tags --force
-          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml || true)
-          if [ -z "$VERSION" ]; then
-            echo "release_needed=false" >> "$GITHUB_OUTPUT"
-            echo "version=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          TAG="v$VERSION"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "release_needed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "release_needed=true" >> "$GITHUB_OUTPUT"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          pip install -e ".[dev]"
+      
+      - name: Run tests
+        run: |
+          python scripts/test_all_features.py
+      
+      - name: Test CLI
+        run: |
+          tenpak --help
+          tenpak pack --help
 
   build:
-    name: Build Linux artifacts
-    needs: determine-release
+    name: Build Package
     runs-on: ubuntu-latest
-    env:
-      RELEASE_VERSION: ${{ needs.determine-release.outputs.version }}
-      TARGET: x86_64-unknown-linux-gnu
-      BINARY: "tenpak"
-      LIB_NAME: "tenpak"
+    needs: test
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          targets: ${{ env.TARGET }}
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ${{ env.TARGET }}
-          cache-on-failure: true
-
-      - name: Build release binary
-        run: |
-          cargo build --profile ci-release --target ${{ env.TARGET }}
-          echo "✓ Binary built"
-
-      - name: Prepare release bundle
-        shell: bash
-        run: |
-          set -euxo pipefail
-          VERSION="${RELEASE_VERSION}"
-          if [ -n "$VERSION" ]; then
-            ARCHIVE_NAME="${{ env.BINARY }}-${VERSION}-${{ env.TARGET }}.tar.gz"
-          else
-            ARCHIVE_NAME="${{ env.BINARY }}-${{ env.TARGET }}.tar.gz"
-          fi
-
-          # Create tarball structure: bin/tenpak, scripts/, docs
-          mkdir -p release-bundle/bin
-
-          # Copy binary
-          cp target/${{ env.TARGET }}/ci-release/${{ env.BINARY }} release-bundle/bin/${{ env.BINARY }}
-
-          # Copy license and docs
-          cp LICENSE release-bundle/LICENSE
-          [ -f README.md ] && cp README.md release-bundle/README.md || true
-          [ -f requirements-eval.txt ] && cp requirements-eval.txt release-bundle/requirements-eval.txt || true
-
-          # Include helper scripts required for evaluation workflows
-          if [ -d scripts ]; then
-            mkdir -p release-bundle/scripts
-            cp scripts/*.sh release-bundle/scripts/
-            cp scripts/*.py release-bundle/scripts/
-          fi
-
-          # Create single tarball
-          tar -czf "${ARCHIVE_NAME}" -C release-bundle .
-
-          # Prepare for upload
-          mkdir -p artifacts
-          mv "${ARCHIVE_NAME}" artifacts/
-
-      - name: Upload workflow artifact
+          python-version: '3.11'
+      
+      - name: Install build tools
+        run: pip install build twine
+      
+      - name: Build package
+        run: python -m build
+      
+      - name: Check package
+        run: twine check dist/*
+      
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BINARY }}-${{ env.TARGET }}
-          path: artifacts
-          if-no-files-found: error
+          name: python-package
+          path: dist/
 
   publish-release:
-    name: Publish GitHub release assets
-    needs:
-      - determine-release
-      - build
+    name: Create GitHub Release
     runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
-    env:
-      RELEASE_VERSION: ${{ needs.determine-release.outputs.version }}
-      TAG_NAME: v${{ needs.determine-release.outputs.version }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Configure git user
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Create GitHub release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euxo pipefail
-          # Create tag and release in one step
-          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            echo "Release $TAG_NAME already exists, will update assets"
-          else
-            git tag "$TAG_NAME"
-            git push origin "$TAG_NAME"
-            gh release create "$TAG_NAME" --title "Release $TAG_NAME" --generate-notes
-          fi
-
-      - name: Download build artifacts
+      - uses: actions/checkout@v4
+      
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: tenpak-*
-          path: release
-
-      - name: Upload bundles to GitHub Release
+          name: python-package
+          path: dist/
+      
+      - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euxo pipefail
-          files=$(find release -name 'tenpak-*.tar.gz' -print)
-          if [ -z "$files" ]; then
-            echo "No tarballs found to upload" >&2
-            exit 1
-          fi
-          for tarball in $files; do
-            gh release upload "$TAG_NAME" "$tarball" --clobber
-          done
+          gh release create ${{ github.ref_name }} \
+            --title "Release ${{ github.ref_name }}" \
+            --generate-notes \
+            dist/*

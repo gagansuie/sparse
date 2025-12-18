@@ -19,9 +19,28 @@ from typing import Tuple, Optional
 from dataclasses import dataclass
 
 # Codec identifiers
+CODEC_V10 = "v10_int4_awq"  # Main production codec (best PPL)
+CODEC_V60 = "v60_int4_awq"  # Best compression
 CODEC_INT4_AWQ = "int4_awq_v1"
 CODEC_INT4_RESIDUAL = "int4_residual_v1"
 CODEC_CALIBRATED_VQ = "calibrated_vq_v1"
+
+# Named presets for layer allocation
+V10_CONFIG = {
+    "attention_group": 256,
+    "mlp_group": 2048,
+    "outlier_pct": 0.5,
+    "compression": "7.42x",
+    "ppl_delta": "+1.47%",
+}
+
+V60_CONFIG = {
+    "attention_group": 512,
+    "mlp_group": 4096,
+    "outlier_pct": 0.5,
+    "compression": "7.48x",
+    "ppl_delta": "+1.54%",
+}
 
 
 @dataclass

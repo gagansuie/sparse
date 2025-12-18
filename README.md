@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
-[![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org)
 
 [Quick Start](#quick-start) • [Benchmarks](#benchmarks) • [API](#tenpak-studio-api) • [CLI](#cli) • [Codecs](#codecs)
 
@@ -22,7 +22,7 @@
 - **REST API** for scalable compression jobs (FastAPI)
 - **CLI tool** for local compression (`tenpak pack`)
 - **Multiple codecs**: INT4+AWQ, INT4+Residual, TenPak-X, Calibrated VQ
-- **Rust + Python** hybrid architecture for performance + flexibility
+- **Pure Python** with PyTorch - no compilation required
 
 ---
 
@@ -32,7 +32,7 @@
 
 | Model | Size | Compression | PPL Δ | Config | Status |
 |-------|------|-------------|-------|--------|--------|
-| **Mistral-7B** | 7B | **7.42x** | **+1.47%** | v10 (INT4+AWQ) | ✅ Production |
+| **Mistral-7B** | 7B | **7.42x** | **+1.47%** | **v10** (INT4+AWQ) | ✅ BEST PPL |
 | **Llama 7B** | 7B | **5.3x** | **-0.41%** | INT4+Residual | ✅ Production |
 | **GPT-2 XL** | 1.5B | **6.03x** | **-0.21%** | Calibrated | ✅ Production |
 | TinyLlama | 1.1B | 4.36x | -0.02% | TenPak-X | ✅ Production |
@@ -109,7 +109,8 @@ tenpak info /path/to/artifact
 ### Python API
 
 ```python
-from tenpak import compress_int4_awq, compress_int4_residual, compute_ppl, allocate_bits
+from core.codecs import compress_int4_awq, compress_int4_residual
+from core.calibration import collect_calibration_stats
 
 # Load model
 from transformers import AutoModelForCausalLM
@@ -364,8 +365,8 @@ Total: ~6 bits/weight → 5.3x compression
 
 ```
 tenpak/
-├── core/                      # Compression engine
-│   ├── codecs.py              # INT4, VQ, AWQ compression
+├── core/                      # Compression engine (Pure Python)
+│   ├── codecs.py              # v10 INT4+AWQ, INT4+Residual
 │   ├── calibration.py         # Fisher, Hessian, activation stats
 │   ├── allocation.py          # Bit allocation strategies
 │   └── delta.py               # Delta compression for fine-tunes
@@ -373,32 +374,23 @@ tenpak/
 │   ├── candidates.py          # Compression candidates
 │   ├── benchmark.py           # Hardware benchmarking
 │   └── selector.py            # Constraint-based selection
-├── artifact/                  # Streamable format (.tnpk)
-│   ├── format.py              # Chunked artifact format
-│   ├── streaming.py           # Partial fetch support
-│   └── signing.py             # HMAC/GPG signing
 ├── studio/                    # REST API
 │   ├── api.py                 # FastAPI endpoints
 │   ├── jobs.py                # Async job runner
 │   └── storage.py             # Artifact packaging
 ├── cli/                       # Command-line interface
 │   └── main.py                # tenpak commands
-├── src/                       # Rust codecs (high-performance)
-│   └── lib.rs
 ├── hf_space/                  # HuggingFace Spaces demo
 └── docs/
-    ├── ARCHITECTURE.md
-    └── ROADMAP.md
+    └── ARCHITECTURE.md
 ```
 
-### Rust vs Python
+### Pure Python
 
-| Component | Language | Reason |
-|-----------|----------|--------|
-| Codecs (pack/unpack) | **Rust** | CPU-bound, SIMD benefits |
-| Calibration | **Python** | Needs PyTorch autograd |
-| API/Jobs | **Python** | FastAPI, HF ecosystem integration |
-| Allocation | **Python** | Light logic, fast iteration |
+All compression is implemented in Python with PyTorch for:
+- GPU acceleration via PyTorch
+- Easy integration with HF transformers
+- No compilation/build complexity
 
 ---
 

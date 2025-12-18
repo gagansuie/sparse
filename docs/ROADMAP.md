@@ -12,7 +12,7 @@ This document tracks the three major features that would make TenPak a compellin
 |---------|--------------|------------|-------|
 | Cost Optimizer | $300M/yr | $1B/yr | Biggest lever - inference costs |
 | Delta Compression | $100M/yr | $300M/yr | Fine-tune storage savings |
-| Streaming Artifact | $100M ARR | $500M ARR | Enterprise lock-in |
+| Streaming Artifact | $100M ARR | $500M ARR | Efficient distribution |
 | **Total** | **$700M/yr** | **$2B+/yr** | |
 
 ---

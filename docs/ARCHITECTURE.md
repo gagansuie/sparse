@@ -176,24 +176,6 @@ artifact/
     └── shard_0.bin    # torch.save() of compressed weights
 ```
 
-## Rust Integration (Optional)
-
-The Rust codecs in `src/lib.rs` provide faster pack/unpack operations:
-
-```rust
-// Production codecs
-pub const CODEC_INT4_RESIDUAL_V1: &str = "int4_residual_v1";
-pub const CODEC_INT4_OPT_LLAMA_V1: &str = "int4_opt_llama_v1";
-
-// Compress
-pub fn compress_bundle_with_codec(bundle: &FloatBundle, codec: &str) -> Result<ArtifactFile, String>;
-
-// Decompress
-pub fn decompress_bundle(artifact: &ArtifactFile) -> Result<FloatBundle, String>;
-```
-
-The Python code calls Rust via PyO3 bindings for performance-critical operations.
-
 ## Configuration Presets
 
 | Target | Attention g | MLP g | Expected Compression | Expected PPL Δ |

@@ -1,0 +1,45 @@
+name: Deploy to HF Space
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'hf_space/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Hugging Face Space
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+      
+      - name: Push to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create a temporary directory for the space
+          mkdir -p /tmp/hf-space
+          
+          # Copy hf_space contents
+          cp -r hf_space/* /tmp/hf-space/
+          
+          # Copy core modules needed for the demo
+          cp -r core /tmp/hf-space/
+          cp -r optimizer /tmp/hf-space/
+          cp -r artifact /tmp/hf-space/
+          cp pyproject.toml /tmp/hf-space/
+          cp requirements.txt /tmp/hf-space/
+          
+          # Push to HF
+          cd /tmp/hf-space
+          git init
+          git add .
+          git commit -m "Deploy from GitHub Actions"
+          git push --force https://user:$HF_TOKEN@huggingface.co/spaces/${{ vars.HF_SPACE_ID }} main
