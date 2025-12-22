@@ -21,6 +21,8 @@ class LayerAllocation:
     rank: int = 0  # For low-rank methods
     group_size: int = 256
     codebook_id: str = 'medium'
+    vq_vec_dim: int = 4
+    vq_codebook_size: int = 256
     bits_per_weight: float = 4.0
     sparsity: float = 0.0
 
@@ -54,7 +56,7 @@ def allocate_bits(
     
     # Collect linear layers with their importance
     for name, module in model.named_modules():
-        if isinstance(module, nn.Linear):
+        if isinstance(module, nn.Linear) or module.__class__.__name__ == "Conv1D":
             # Skip embeddings and lm_head
             if 'embed' in name.lower() or 'lm_head' in name.lower():
                 continue
@@ -69,23 +71,37 @@ def allocate_bits(
         "quality": {
             "attn_group": 128,
             "mlp_group": 512,
-            "method": "int4",
+            "method": "int4_awq",
         },
         "balanced": {
             "attn_group": 256,
             "mlp_group": 2048,
-            "method": "int4",
+            "method": "int4_awq",
         },
         "size": {
             "attn_group": 512,
             "mlp_group": 4096,
-            "method": "int4",
+            "method": "int4_awq",
+        },
+        "v11": {
+            "awq_top_pct": 15,
+            "attn_group": 256,
+            "mlp_group": 2048,
+            "outlier_pct": 0.5,
+            "vq_vec_dim": 4,
+            "vq_codebook_size": 256,
+            "method": "hybrid",
         },
     }
     
     cfg = configs.get(target, configs["balanced"])
     
-    for name, module, importance in linear_layers:
+    num_layers = len(linear_layers)
+    awq_top_k = 0
+    if target == "v11":
+        awq_top_k = max(1, int(num_layers * cfg.get("awq_top_pct", 0) / 100.0))
+
+    for i, (name, module, importance) in enumerate(linear_layers):
         name_lower = name.lower()
         
         # Determine if attention or MLP
@@ -94,20 +110,73 @@ def allocate_bits(
             'attn', 'attention', 'query', 'key', 'value'
         ])
         
+        is_attention_in_proj = any(x in name_lower for x in [
+            'q_proj', 'k_proj', 'v_proj', 'c_attn'
+        ])
+        
+        layer_method = cfg.get("method", "int4_awq")
+        outlier_pct = float(cfg.get("outlier_pct", 0.5))
+        vq_vec_dim = int(cfg.get("vq_vec_dim", 4))
+        vq_codebook_size = int(cfg.get("vq_codebook_size", 256))
+
+        # Compute AWQ cost (bits/weight)
         if is_attention:
-            group_size = cfg["attn_group"]
+            awq_group_size = cfg["attn_group"]
         else:
-            group_size = cfg["mlp_group"]
-        
-        # Calculate effective bits per weight
-        bits = 4.0 + 32.0 / group_size  # INT4 + scale overhead
-        
+            awq_group_size = cfg["mlp_group"]
+
+        awq_bits = 4.0 + 16.0 / awq_group_size
+        if outlier_pct > 0:
+            awq_bits += 16.0 * outlier_pct / 100.0
+
+        if target == "v11":
+            # Top layers: always AWQ
+            if i < awq_top_k or is_attention:
+                layer_method = "int4_awq"
+                group_size = awq_group_size
+                bits = awq_bits
+            else:
+                # Remaining layers: use VQ only if it actually improves bits/weight
+                m, n = module.weight.shape
+                pad_n = (vq_vec_dim - n % vq_vec_dim) % vq_vec_dim
+                n_padded = n + pad_n
+                num_vectors = (m * n_padded) // vq_vec_dim
+                effective_codebook_size = min(vq_codebook_size, num_vectors) if num_vectors > 0 else 1
+                compressed_bits = (num_vectors * 8.0) + (effective_codebook_size * vq_vec_dim * 16.0)
+                vq_bits = compressed_bits / float(m * n)
+
+                if vq_bits < awq_bits:
+                    layer_method = "calibrated_vq"
+                    group_size = vq_vec_dim
+                    bits = vq_bits
+                    vq_codebook_size = effective_codebook_size
+                else:
+                    layer_method = "int4_awq"
+                    group_size = awq_group_size
+                    bits = awq_bits
+        else:
+            if layer_method == "calibrated_vq":
+                m, n = module.weight.shape
+                pad_n = (vq_vec_dim - n % vq_vec_dim) % vq_vec_dim
+                n_padded = n + pad_n
+                num_vectors = (m * n_padded) // vq_vec_dim
+                effective_codebook_size = min(vq_codebook_size, num_vectors) if num_vectors > 0 else 1
+                compressed_bits = (num_vectors * 8.0) + (effective_codebook_size * vq_vec_dim * 16.0)
+                bits = compressed_bits / float(m * n)
+                group_size = vq_vec_dim
+                vq_codebook_size = effective_codebook_size
+            else:
+                group_size = awq_group_size
+                bits = awq_bits
+
         alloc = LayerAllocation(
             name=name,
-            method=cfg["method"],
+            method=layer_method,
             importance=importance,
             group_size=group_size,
-            bits_per_weight=bits
+            vq_vec_dim=vq_vec_dim,
+            vq_codebook_size=vq_codebook_size,
+            bits_per_weight=bits,
         )
         allocations[name] = alloc
     
@@ -118,7 +187,7 @@ def allocate_bits(
         for name, module, _ in linear_layers
     )
     avg_bits = total_bits / total_params if total_params > 0 else 4.0
-    expected_compression = 32.0 / avg_bits
+    expected_compression = 16.0 / avg_bits
     
     print(f"[ALLOCATE] {len(allocations)} layers configured", flush=True)
     print(f"[ALLOCATE] Expected: {avg_bits:.2f} bits/weight, {expected_compression:.2f}x compression", flush=True)
@@ -178,7 +247,7 @@ def allocate_bits_adaptive(
             # Bottom 40%: Aggressive
             group_size = 512
         
-        bits = 4.0 + 32.0 / group_size
+        bits = 4.0 + 16.0 / group_size
         
         alloc = LayerAllocation(
             name=name,

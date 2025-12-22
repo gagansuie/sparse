@@ -21,13 +21,45 @@ This document tracks the three major features that would make TenPak a compellin
 
 | Feature | Status | Priority | Est. Effort |
 |---------|--------|----------|-------------|
-| [1. Cost Optimizer](#1-automatic-cost-per-token-optimizer) | 🟢 **Complete** | 🥇 **Highest** | 4-6 weeks |
-| [2. Delta Compression](#2-delta-compression-for-fine-tunes) | � **Complete** | 🥈 High | 2-3 weeks |
-| [3. Streamable Artifact](#3-hub-native-streamable-serving-artifact) | � **Complete** | 🥉 High | 3-4 weeks |
+| [1. Rust FFI Compression](#1-rust-ffi-compression) | 🟢 **Complete** | 🥇 **Highest** | 2-3 weeks |
+| [2. Cost Optimizer](#2-automatic-cost-per-token-optimizer) | 🟢 **Complete** | 🥇 **Highest** | 4-6 weeks |
+| [3. Delta Compression](#3-delta-compression-for-fine-tunes) | 🟢 **Complete** | 🥈 High | 2-3 weeks |
+| [4. Streamable Artifact](#4-hub-native-streamable-serving-artifact) | 🟢 **Complete** | 🥉 High | 3-4 weeks |
+| [5. HTTP Streaming](#5-http-streaming) | � **Complete** | 🥉 Medium | 1-2 weeks |
+| [6. vLLM/TGI Integration](#6-vllmtgi-integration) | � **Complete** | 🥉 Medium | 2-3 weeks |
 
 ---
 
-## 1. Delta Compression for Fine-tunes
+## 1. Quantization Wrapper Architecture
+
+### Status: ✅ Complete (Pivot from custom Rust codecs)
+
+**Decision**: Instead of maintaining custom compression codecs, wrap industry-standard tools.
+
+### What Was Built
+
+- [x] **QuantizationWrapper**: Unified API for AutoGPTQ, AutoAWQ, bitsandbytes
+- [x] **QuantizationConfig**: Dataclass for quantization parameters
+- [x] **QUANTIZATION_PRESETS**: Pre-defined configs (gptq_quality, awq_balanced, bnb_nf4)
+- [x] **Estimate size**: Calculate model size before quantization
+
+### Wrapped Tools
+
+| Tool | Best For | Compression | Calibration |
+|------|----------|-------------|-------------|
+| **AutoGPTQ** | Max compression | 7-8x | Required |
+| **AutoAWQ** | Quality/compression balance | 7-8x | Required |
+| **bitsandbytes** | Fast, no calibration | 2-7.5x | Optional |
+
+### Files
+
+- `core/quantization.py` - Wrapper implementation
+- `optimizer/candidates.py` - Updated to use wrappers
+- Legacy FFI code removed (v0.2.0)
+
+---
+
+## 2. Delta Compression for Fine-tunes
 
 ### The Gap
 
@@ -77,7 +109,7 @@ Reconstruction:
 
 ---
 
-## 2. Hub-Native Streamable Serving Artifact
+## 3. Hub-Native Streamable Serving Artifact
 
 ### The Gap
 
@@ -158,7 +190,7 @@ assert artifact.verify_signature()
 
 ---
 
-## 3. Automatic Cost-per-Token Optimizer
+## 4. Automatic Cost-per-Token Optimizer
 
 ### The Gap
 
@@ -284,6 +316,11 @@ Pipeline:
 - [x] REST API
 - [x] CLI
 
+### Phase 1.5: Rust FFI (Deprecated) ❌
+- Removed in v0.2.0 - pivoted to wrapper architecture
+- Custom Rust codecs replaced by AutoGPTQ/AutoAWQ/bitsandbytes
+- See DEPRECATED.md for migration guide
+
 ### Phase 2: Cost Optimizer ✅
 - [x] Candidate generation (`optimizer/candidates.py`)
 - [x] Hardware benchmarking (`optimizer/benchmark.py`)
@@ -305,8 +342,20 @@ Pipeline:
 - [x] Signing (HMAC + GPG support) - `artifact/signing.py`
 - [x] Streaming support - `artifact/streaming.py`
 - [x] CLI commands (`tenpak artifact`)
-- [ ] Remote HTTP streaming (future)
-- [ ] vLLM/TGI integration (future)
+
+### Phase 5: HTTP Streaming & Inference ✅
+- [x] HTTP artifact streaming (`artifact/http_streaming.py`)
+- [x] Remote artifact loading with caching
+- [x] CDN-friendly range requests
+- [x] vLLM integration helpers (`inference/vllm_integration.py`)
+- [x] TGI integration helpers
+- [x] Inference benchmarking
+
+### Phase 6: Future Work 🔴
+- [ ] Ed25519 signing in Rust (low priority)
+- [ ] Monitoring + re-tuning dashboard
+- [ ] Advanced caching strategies
+- [ ] Multi-region artifact distribution
 
 ---
 

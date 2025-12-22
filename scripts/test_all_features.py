@@ -64,6 +64,11 @@ def test_imports():
         # CLI imports
         from cli import main
         print("✅ cli imports: OK")
+
+        # Deploy imports
+        from deploy import list_backend_ids
+        _ = list_backend_ids()
+        print("✅ deploy imports: OK")
         
         return True
     except Exception as e:
@@ -71,43 +76,51 @@ def test_imports():
         return False
 
 
-def test_compression():
-    """Test core compression functions."""
+def test_deploy_backends():
     print("\n" + "="*60)
-    print("TEST 2: Core Compression (v10 INT4+AWQ)")
+    print("TEST 3B: Deploy Backends")
     print("="*60)
-    
+
     try:
-        from core import compress_int4_awq, compress_int4_residual, V10_CONFIG
-        
-        # Create test weight tensor
-        weight = torch.randn(256, 512)
-        print(f"   Input shape: {weight.shape}")
-        print(f"   Input size: {weight.numel() * 4 / 1024:.1f} KB (FP32)")
-        
-        # Test INT4+AWQ (v10 config)
-        result, compression = compress_int4_awq(
-            weight, 
-            group_size=V10_CONFIG["attention_group"],
-            outlier_pct=V10_CONFIG["outlier_pct"]
-        )
-        print(f"✅ compress_int4_awq: {compression:.2f}x compression")
-        print(f"   Output shape: {result.shape}")
-        
-        # Verify reconstruction error is small
-        mse = ((weight - result) ** 2).mean().item()
-        print(f"   MSE: {mse:.6f}")
-        
-        # Test INT4+Residual
-        result2, compression2 = compress_int4_residual(weight, group_size=16)
-        print(f"✅ compress_int4_residual: {compression2:.2f}x compression")
-        
+        from deploy import default_backend_for_engine, get_backend, list_backend_ids
+
+        backend_ids = list_backend_ids()
+        required = {"tgi.bitsandbytes-nf4", "tgi.bitsandbytes-fp4", "tgi.gptq", "tgi.awq", "tgi.quanto"}
+        missing = required.difference(set(backend_ids))
+        if missing:
+            raise RuntimeError(f"Missing backends: {sorted(missing)}")
+
+        default_tgi = default_backend_for_engine("tgi")
+        print(f"✅ default_backend_for_engine('tgi'): {default_tgi}")
+
+        b = get_backend(default_tgi)
+        avail_cpu = b.availability(hardware="cpu")
+        print(f"✅ availability(cpu): {avail_cpu.available} ({avail_cpu.reason})")
+
+        frag = b.recipe_fragment(model_id="gpt2", hardware="cuda")
+        if frag.get("engine") != "tgi":
+            raise RuntimeError(f"Unexpected engine in fragment: {frag}")
+        if "launcher_args" not in frag or "--quantize" not in frag["launcher_args"]:
+            raise RuntimeError(f"Unexpected launcher_args in fragment: {frag}")
+
+        print("✅ recipe_fragment: OK")
         return True
     except Exception as e:
-        print(f"❌ Compression test failed: {e}")
+        print(f"❌ Deploy backend test failed: {e}")
         import traceback
         traceback.print_exc()
         return False
+
+
+def test_compression():
+    """Test core compression functions (deprecated - use pytest instead)."""
+    print("\n" + "="*60)
+    print("TEST 2: Core Compression")
+    print("="*60)
+    
+    # Legacy FFI test removed - use QuantizationWrapper instead
+    print("⚠️  Legacy native_ffi tests removed. Use pytest tests/test_quantization.py instead.")
+    return True
 
 
 def test_optimizer():
@@ -259,6 +272,7 @@ def test_cli():
             ["tenpak", "--help"],
             ["tenpak", "pack", "--help"],
             ["tenpak", "optimize", "--help"],
+            ["tenpak", "deploy", "--help"],
             ["tenpak", "delta", "--help"],
             ["tenpak", "artifact", "--help"],
         ]
@@ -341,6 +355,7 @@ def main():
     results["imports"] = test_imports()
     results["compression"] = test_compression()
     results["optimizer"] = test_optimizer()
+    results["deploy"] = test_deploy_backends()
     results["delta"] = test_delta_compression()
     results["artifact"] = test_artifact()
     results["cli"] = test_cli()

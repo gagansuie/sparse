@@ -157,8 +157,8 @@ def compress_delta_sparse(
     values = flat_delta[mask]
     
     # Calculate compression ratio
-    original_size = delta.numel() * delta.element_size()
-    compressed_size = indices.numel() * 4 + values.numel() * values.element_size()  # indices as int32
+    original_size = delta.numel() * 2  # FP16 baseline
+    compressed_size = indices.numel() * 4 + values.numel() * 2  # indices int32 + values FP16
     compression_ratio = original_size / max(compressed_size, 1)
     
     return indices, values, compression_ratio
@@ -198,7 +198,7 @@ def compress_delta_int8(
     quantized_bytes = quantized.cpu().numpy().tobytes()
     
     # Calculate compression ratio (FP16 -> INT8 = 2x, FP32 -> INT8 = 4x)
-    original_size = delta.numel() * delta.element_size()
+    original_size = delta.numel() * 2  # FP16 baseline
     compressed_size = len(quantized_bytes) + 4  # +4 for scale
     compression_ratio = original_size / compressed_size
     
@@ -338,7 +338,7 @@ def compress_delta(
         method = choose_delta_method(delta, stats)
         
         # Track sizes
-        original_size = delta.numel() * delta.element_size()
+        original_size = delta.numel() * 2
         total_original_size += original_size
         total_params += delta.numel()
         
@@ -380,7 +380,7 @@ def compress_delta(
             
             # Save scale separately
             layer_info["scale"] = scale
-            compressed_size = len(quantized_bytes)
+            compressed_size = len(quantized_bytes) + 4
             layer_info["compressed_size"] = compressed_size
             changed_params += delta.numel()
         

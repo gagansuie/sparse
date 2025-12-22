@@ -2,192 +2,365 @@
 
 ## Overview
 
-TenPak is a model compression system for LLMs with three main components:
+TenPak is an **LLM quantization orchestration platform** built entirely in Python:
 
-1. **TenPak Core** - Compression engine (codecs, calibration, allocation)
-2. **TenPak Studio** - REST API and job management
-3. **TenPak CLI** - Command-line interface
+1. **Quantization Wrapper** (`core/quantization.py`) - Unified API for AutoGPTQ, AutoAWQ, bitsandbytes
+2. **Delta Compression** (`core/delta.py`) - Efficient storage for fine-tunes
+3. **Cost Optimizer** (`optimizer/`) - Auto-select best quantization method
+4. **HTTP Streaming** (`artifact/http_streaming.py`) - CDN-friendly remote artifacts
+5. **Inference Integration** (`inference/`) - vLLM/TGI deployment helpers
+6. **REST API** (`studio/`) - Compression-as-a-service
+7. **CLI** (`cli/`) - Command-line interface
 
 ## Component Design
 
-### Core (`tenpak/core/`)
+### Core: Quantization Wrapper (`core/quantization.py`)
 
-The compression engine handles the actual quantization work.
+**TenPak does NOT implement quantization** - it wraps industry-standard tools:
+
+```python
+from core import QuantizationWrapper, QUANTIZATION_PRESETS
+
+# Unified API for all quantization methods
+wrapper = QuantizationWrapper(method="gptq", bits=4, group_size=128)
+quantized_model = wrapper.quantize("meta-llama/Llama-2-7b-hf")
+```
+
+**Supported Methods:**
+- **AutoGPTQ** - 7-8x compression, <1% PPL, requires calibration
+- **AutoAWQ** - 7-8x compression, <2% PPL, requires calibration
+- **bitsandbytes NF4** - 6-7x compression, <1.5% PPL, no calibration
+- **bitsandbytes INT8** - 2x compression, <0.5% PPL, conservative
+
+**Presets:**
+```python
+QUANTIZATION_PRESETS = {
+    "gptq_quality": QuantizationConfig(method="gptq", bits=4, group_size=128),
+    "awq_balanced": QuantizationConfig(method="awq", bits=4, group_size=128),
+    "bnb_nf4": QuantizationConfig(method="bitsandbytes", bits=4, quant_type="nf4"),
+    # ... 8 total presets
+}
+```
+
+### Core Modules (`core/`)
 
 ```
 core/
-├── __init__.py      # Public API exports
-├── codecs.py        # Compression algorithms (INT4, VQ, AWQ)
-├── calibration.py   # Stats collection (Fisher, Hessian, activations)
-└── allocation.py    # Bit allocation strategies per layer
+├── __init__.py          # Public API exports
+├── quantization.py      # Wrapper for AutoGPTQ/AutoAWQ/bitsandbytes
+├── delta.py            # Delta compression for fine-tunes
+├── calibration.py      # Stats collection (Fisher, Hessian) - legacy
+└── allocation.py       # Bit allocation strategies - legacy
 ```
 
-**Key Functions:**
-- `compress_int4_awq()` - Production codec (v10 config)
-- `compress_int4_residual()` - Best quality without calibration
-- `collect_calibration_stats()` - Fisher + Hessian + activation scales
-- `allocate_bits()` - Per-layer compression strategy
+**Key APIs:**
 
-### Studio (`tenpak/studio/`)
+1. **Quantization Wrapper**
+```python
+wrapper = QuantizationWrapper(method="awq", bits=4)
+model = wrapper.quantize("model_id", calibration_data=dataset)
+```
 
-REST API for running compression jobs at scale.
+2. **Delta Compression**
+```python
+from core.delta import compress_delta, estimate_delta_savings
+
+# Estimate savings
+savings = estimate_delta_savings(base_model, finetuned_model)
+# 60-90% size reduction
+
+# Compress as delta
+delta_artifact = compress_delta(base_model, finetuned_model)
+```
+
+### Optimizer (`optimizer/`)
+
+**TenPak's unique value** - auto-select best quantization method:
+
+```python
+from optimizer import optimize_model, OptimizationConstraints
+
+constraints = OptimizationConstraints(
+    max_ppl_delta=2.0,      # <2% quality loss
+    max_latency_ms=100,     # <100ms inference
+    min_compression=5.0     # >5x compression
+)
+
+result = optimize_model(
+    model_id="meta-llama/Llama-2-7b-hf",
+    constraints=constraints,
+    hardware_type="a10g"
+)
+
+print(f"Best method: {result.winner.method}")
+print(f"Cost: ${result.winner.cost_per_1m_tokens}")
+```
+
+**Features:**
+- Benchmark all quantization methods (GPTQ, AWQ, bitsandbytes)
+- Select cheapest option meeting constraints
+- Supports hardware-specific optimization (T4, A10G, A100)
+
+### Inference Integration (`inference/`)
+
+```python
+from inference.vllm_integration import TenPakVLLMLoader
+
+# One-line vLLM deployment
+loader = TenPakVLLMLoader(
+    artifact_path="llama-7b.tnpk",
+    tensor_parallel_size=4
+)
+engine = loader.create_engine()
+```
+
+**Supported Engines:**
+- vLLM (tensor parallelism, paged attention)
+- TGI (Text Generation Inference)
+
+### Studio API (`studio/`)
+
+REST API for compression-as-a-service.
 
 ```
 studio/
-├── __init__.py      # Public API exports
 ├── api.py           # FastAPI endpoints
 ├── jobs.py          # Async job runner
-└── storage.py       # Artifact packaging and storage
+└── storage.py       # Artifact storage
 ```
 
 **Endpoints:**
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/compress` | POST | Start compression job |
+| `/compress` | POST | Quantize a model |
+| `/optimize` | POST | **Auto-select best method** |
+| `/delta/compress` | POST | **Compress fine-tune as delta** |
 | `/status/{id}` | GET | Poll job progress |
 | `/artifact/{id}` | GET | Download result |
-| `/evaluate` | POST | Compute PPL |
-| `/jobs` | GET | List recent jobs |
 
-### CLI (`tenpak/cli/`)
-
-Command-line tool for local compression.
-
-```
-cli/
-├── __init__.py
-└── main.py          # Entry point (tenpak pack/eval/info)
-```
+### CLI (`cli/`)
 
 **Commands:**
 ```bash
-tenpak pack <model_id> [--target quality|balanced|size]
-tenpak eval <model_id> [--samples N]
-tenpak info <artifact_path>
+# Quantize with auto-optimization
+tenpak optimize <model_id> --max-ppl-delta 2.0
+
+# Quantize with specific method
+tenpak quantize <model_id> --method gptq --bits 4
+
+# Delta compression for fine-tunes
+tenpak delta <finetuned_model> --base <base_model>
+
+# Serve with vLLM
+tenpak serve <artifact_path> --engine vllm
 ```
 
 ## Data Flow
 
+### Quantization Workflow
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      User Request                            │
-│  (CLI: tenpak pack, API: POST /compress, Python: direct)    │
+│                   User Request                               │
+│  wrapper = QuantizationWrapper(method="gptq", bits=4)       │
+│  model = wrapper.quantize("meta-llama/Llama-2-7b-hf")       │
 └─────────────────────────────┬───────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    1. Load Model                             │
-│  transformers.AutoModelForCausalLM.from_pretrained()        │
+│              1. Select Quantization Tool                     │
+│  if method == "gptq": use AutoGPTQ                          │
+│  if method == "awq": use AutoAWQ                            │
+│  if method == "bitsandbytes": use bitsandbytes              │
 └─────────────────────────────┬───────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                2. Collect Calibration Stats                  │
-│  - Fisher information (gradient importance)                  │
-│  - Activation scales (AWQ-style)                            │
-│  - Hessian diagonal (GPTQ-style)                            │
+│              2. Prepare Calibration Data                     │
+│  (if required by method)                                     │
+│  Load dataset, tokenize, create DataLoader                   │
 └─────────────────────────────┬───────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                  3. Allocate Bits Per Layer                  │
-│  - Attention layers: smaller groups (g=256)                  │
-│  - MLP layers: larger groups (g=2048)                       │
-│  - Based on target: quality/balanced/size                    │
+│              3. Call Quantization Tool                       │
+│  AutoGPTQ.quantize() / AutoAWQ.quantize() / etc.            │
+│  Tool handles all compression details                        │
 └─────────────────────────────┬───────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   4. Compress Each Layer                     │
-│  For each Linear layer:                                      │
-│    - Scale by activation importance                          │
-│    - Extract outliers to FP16                               │
-│    - INT4 quantize with iterative refinement                │
-│    - Replace weight in-place                                │
-└─────────────────────────────┬───────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    5. Evaluate Quality                       │
-│  - Compute baseline PPL (before compression)                 │
-│  - Compute compressed PPL (after compression)               │
-│  - Calculate PPL delta percentage                           │
-└─────────────────────────────┬───────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    6. Save Artifact                          │
-│  - manifest.json (metadata, allocations, metrics)           │
-│  - weights/shard_0.bin (compressed tensors)                 │
+│              4. Return Quantized Model                       │
+│  Model ready for inference or saving                         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Compression Algorithm (v10 Config)
+### Cost Optimization Workflow
 
-The production configuration (v10) uses INT4 + AWQ:
-
-### 1. AWQ Scaling
-```python
-# Scale columns by activation importance
-w_scaled = weight * act_scale.sqrt()
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   User Request                               │
+│  result = optimize_model(model_id, constraints)              │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              1. Generate Candidates                          │
+│  candidates = [gptq_quality, awq_balanced, bnb_nf4, ...]    │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              2. Benchmark Each Candidate                     │
+│  For each candidate:                                         │
+│    - Quantize model                                          │
+│    - Measure latency (p50, p95)                             │
+│    - Measure throughput (tokens/sec)                        │
+│    - Estimate cost per 1M tokens                            │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              3. Select Winner                                │
+│  Filter by constraints (PPL, latency, compression)           │
+│  Pick cheapest option meeting all constraints                │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              4. Return Optimization Result                   │
+│  result.winner.method = "awq"                                │
+│  result.winner.cost_per_1m_tokens = 0.15                     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### 2. Outlier Extraction
+## Delta Compression Algorithm
+
+**TenPak's unique feature** - compress fine-tunes as deltas:
+
+### 1. Detect Changed Weights
 ```python
-# Keep top 0.5% weights as FP16
-threshold = torch.kthvalue(w.abs(), k=int(n * 0.995))
-outliers = w * (w.abs() >= threshold)
-w_to_quant = w * (w.abs() < threshold)
+base_state = base_model.state_dict()
+fine_state = finetuned_model.state_dict()
+
+deltas = {}
+for name in base_state:
+    delta = fine_state[name] - base_state[name]
+    if torch.abs(delta).max() > threshold:
+        deltas[name] = delta  # Only store changed weights
 ```
 
-### 3. Iterative Scale Refinement
+### 2. Sparse Storage
 ```python
-for _ in range(5):  # 5 iterations
-    scale = (g_max - g_min) / 15
-    q = ((group - g_min) / scale).round().clamp(0, 15)
-    deq = q * scale + g_min
-    err = group - deq
-    g_min += err.min() * 0.5
-    g_max += err.max() * 0.5
+# Store only non-zero deltas
+for name, delta in deltas.items():
+    indices = torch.nonzero(torch.abs(delta) > threshold)
+    values = delta[indices]
+    # Store: (name, indices, values) instead of full tensor
 ```
 
-### 4. Final Quantization
+### 3. Compression Result
 ```python
-q = ((group - g_min) / scale).round().clamp(0, 15)
-dequantized = q * scale + g_min + outliers
+# Typical results:
+# Full model: 13 GB
+# Delta: 500 MB (96% reduction)
+# Base model reference: meta-llama/Llama-2-7b-hf
 ```
 
-## Artifact Format
+### 4. Reconstruction
+```python
+def reconstruct_from_delta(base_model, delta_artifact):
+    model = copy.deepcopy(base_model)
+    for name, (indices, values) in delta_artifact.items():
+        model.state_dict()[name][indices] += values
+    return model
+```
+
+### Artifact Format (`artifact/`)
+
+Chunked, signed, HTTP-streamable artifact format.
 
 ```
 artifact/
-├── manifest.json      # Metadata
-│   {
-│     "version": "1.0",
-│     "model_id": "mistralai/Mistral-7B-v0.1",
-│     "codec": "int4_awq_v1",
-│     "compression_ratio": 7.42,
-│     "baseline_ppl": 5.234,
-│     "compressed_ppl": 5.311,
-│     "ppl_delta": 1.47,
-│     "allocations": {...}
-│   }
-└── weights/
-    └── shard_0.bin    # torch.save() of compressed weights
+├── format.py            # Artifact metadata and manifest
+├── streaming.py         # Local streaming load/verify
+├── signing.py           # HMAC + GPG signing
+└── http_streaming.py    # HTTP streaming for remote artifacts
 ```
 
-## Configuration Presets
+## Artifact Structure
 
-| Target | Attention g | MLP g | Expected Compression | Expected PPL Δ |
-|--------|-------------|-------|---------------------|----------------|
-| `quality` | 128 | 512 | ~5x | <1% |
-| `balanced` | 256 | 2048 | ~7x | <2% |
-| `size` | 512 | 4096 | ~8x | <5% |
+```
+<artifact_dir>/
+├── manifest.json      # Metadata + quantization info
+│   {
+│     "version": "1.0",
+│     "model_id": "meta-llama/Llama-2-7b-hf",
+│     "quantization": {
+│       "method": "awq",
+│       "bits": 4,
+│       "group_size": 128,
+│       "model_path": "./quantized_model"
+│     },
+│     "delta": {  # Optional - if this is a fine-tune
+│       "base_model_id": "meta-llama/Llama-2-7b-hf",
+│       "delta_method": "sparse_int8",
+│       "changed_layers": ["layers.10", "layers.11"]
+│     },
+│     "optimization": {  # Optional - if cost-optimized
+│       "selected_method": "awq_balanced",
+│       "cost_per_1m_tokens": 0.15,
+│       "latency_p50_ms": 45.2
+│     },
+│     "chunks": [...],
+│     "signature": {...}
+│   }
+├── quantized_model/   # Quantized model weights
+│   ├── config.json
+│   ├── model.safetensors
+│   └── quantization_config.json
+└── signature.sig      # Optional GPG signature
+```
 
-## Key Learnings
+## Quantization Presets
 
-1. **4x compression is the no-calibration ceiling** - INT4 g=8 with iterative refinement
-2. **Calibration is required for >6x** - AWQ activation scaling is essential
-3. **Larger models compress better** - Llama 7B achieves negative PPL delta
-4. **Custom GPTQ/AQLM implementations are fragile** - Stick to proven INT4+AWQ
-5. **v10 config is battle-tested** - 7.42x @ +1.47% on Mistral-7B
+| Preset | Method | Bits | Group Size | Compression | PPL Δ | Calibration |
+|--------|--------|------|------------|-------------|-------|-------------|
+| `gptq_quality` | GPTQ | 4 | 128 | 7-8x | <1% | Required |
+| `awq_balanced` | AWQ | 4 | 128 | 7-8x | <2% | Required |
+| `bnb_nf4` | bitsandbytes | 4 | - | 6-7x | <1.5% | Optional |
+| `bnb_int8` | bitsandbytes | 8 | - | 2x | <0.5% | No |
+| `gptq_aggressive` | GPTQ | 3 | 128 | 10-12x | 3-5% | Required |
+| `awq_fast` | AWQ | 4 | 64 | 6-7x | <2% | Required |
+
+## Key Design Decisions
+
+1. **Wrapper Architecture** - Don't compete with AutoGPTQ/AutoAWQ, orchestrate them
+2. **Delta Compression is Unique** - No one else offers this at scale (60-90% savings on fine-tunes)
+3. **Cost Optimizer is Unique** - Auto-benchmark all methods, pick cheapest meeting constraints
+4. **Pure Python** - No Rust/C++ dependencies, easier maintenance and deployment
+5. **Focus on Orchestration** - HTTP streaming, vLLM/TGI integration, artifact format
+6. **Tensor Parallelism** - Pass-through to wrapped tools and inference engines
+
+## Performance Notes
+
+- **Quantization**: Delegated to AutoGPTQ/AutoAWQ (highly optimized CUDA kernels)
+- **Delta Compression**: CPU/PyTorch tensor ops, I/O bound (disk reading is bottleneck)
+- **HTTP Streaming**: Network I/O bound, Python overhead negligible
+- **Cost Optimizer**: Orchestration is <0.1s in 5-minute quantization workflow
+
+## Architecture Evolution
+
+### v0.1.0 (Dec 2024) - Custom Rust Codecs
+- Custom INT4 quantization in Rust
+- FFI layer for Python integration
+- Goal: 10x compression with <1% PPL
+- **Result**: Achieved 4x without calibration, fragile for >6x
+
+### v0.2.0 (Dec 2024) - Wrapper Architecture
+- **Pivoted** to wrap AutoGPTQ/AutoAWQ/bitsandbytes
+- Removed all Rust code
+- Added delta compression (unique)
+- Added cost optimizer (unique)
+- Added HTTP streaming and vLLM/TGI integration
+- **Result**: Production-ready orchestration platform

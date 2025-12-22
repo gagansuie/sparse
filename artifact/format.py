@@ -13,6 +13,8 @@ from typing import Dict, List, Optional, Any, Iterator
 from datetime import datetime
 from pathlib import Path
 
+# Legacy FFI imports removed - use QuantizationWrapper instead
+
 
 TNPK_VERSION = "1.0"
 TNPK_MAGIC = b"TNPK"
@@ -52,7 +54,6 @@ class ArtifactManifest:
     """Manifest for a .tnpk artifact."""
     version: str = TNPK_VERSION
     model_id: str = ""
-    codec: str = ""
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     
     # Model info
@@ -62,12 +63,40 @@ class ArtifactManifest:
     vocab_size: int = 0
     total_params: int = 0
     
+    # Quantization metadata (wrapper architecture)
+    quantization: Dict[str, Any] = field(default_factory=dict)
+    # Example: {
+    #   "method": "gptq",  # or "awq", "bitsandbytes", "none"
+    #   "bits": 4,
+    #   "group_size": 128,
+    #   "desc_act": false,
+    #   "model_path": "/path/to/quantized/model",  # Local path or HF repo
+    # }
+    
     # Compression info
     compression_ratio: float = 1.0
     original_size_bytes: int = 0
     compressed_size_bytes: int = 0
     
-    # Chunks
+    # Delta compression (if this is a fine-tune)
+    delta: Optional[Dict[str, Any]] = None
+    # Example: {
+    #   "base_model_id": "mistralai/Mistral-7B-v0.1",
+    #   "delta_method": "sparse_int8",
+    #   "changed_layers": ["layers.10", "layers.11"],
+    # }
+    
+    # Cost optimization results
+    optimization: Optional[Dict[str, Any]] = None
+    # Example: {
+    #   "selected_method": "awq_balanced",
+    #   "candidates_tested": ["gptq_quality", "awq_balanced", "bnb_nf4"],
+    #   "latency_p50_ms": 45.2,
+    #   "throughput_tps": 120.5,
+    #   "cost_per_1m_tokens": 0.15,
+    # }
+    
+    # Chunks (for streaming)
     chunks: List[ChunkInfo] = field(default_factory=list)
     
     # Signing (optional)
@@ -79,16 +108,18 @@ class ArtifactManifest:
         return {
             "version": self.version,
             "model_id": self.model_id,
-            "codec": self.codec,
             "created_at": self.created_at,
             "architecture": self.architecture,
             "num_layers": self.num_layers,
             "hidden_size": self.hidden_size,
             "vocab_size": self.vocab_size,
             "total_params": self.total_params,
+            "quantization": self.quantization,
             "compression_ratio": self.compression_ratio,
             "original_size_bytes": self.original_size_bytes,
             "compressed_size_bytes": self.compressed_size_bytes,
+            "delta": self.delta,
+            "optimization": self.optimization,
             "chunks": [c.to_dict() for c in self.chunks],
             "signature": self.signature,
             "signer": self.signer,
@@ -192,24 +223,23 @@ def compute_chunk_hash(data: bytes) -> str:
 def create_artifact(
     model_id: str,
     output_path: str,
-    codec: str = "int4_awq",
+    codec: str = "int4_residual_v1",
     chunk_size_mb: int = 64,
     progress_callback: Optional[callable] = None,
 ) -> TenPakArtifact:
-    """Create a .tnpk artifact from a HuggingFace model.
+    """Create a .tnpk artifact from a HuggingFace model using Rust FFI compression.
     
     Args:
         model_id: HuggingFace model ID
         output_path: Output path for .tnpk artifact
-        codec: Compression codec to use
-        chunk_size_mb: Target chunk size in MB
+        codec: Compression codec to use (e.g., 'int4_residual_v1', 'int4_opt_llama_v1')
+        chunk_size_mb: Target chunk size in MB (currently unused, all tensors compressed together)
         progress_callback: Optional callback(msg, progress)
         
     Returns:
         TenPakArtifact instance
     """
     from transformers import AutoModelForCausalLM, AutoConfig
-    from core.codecs import compress_int4_awq
     
     def log(msg: str, progress: float = 0.0):
         if progress_callback:
@@ -234,36 +264,63 @@ def create_artifact(
         low_cpu_mem_usage=True,
     )
     
-    log("Creating chunks...", 0.20)
+    log("Preparing tensors for compression...", 0.10)
+    
+    state_dict = model.state_dict()
+    param_names = list(state_dict.keys())
+    
+    # Collect tensors eligible for compression (2D weight matrices with >1000 elements)
+    compress_tensors = []
+    compress_names = []
+    passthrough_tensors = {}  # name -> tensor bytes for non-compressed tensors
+    
+    total_params = 0
+    total_original = 0
+    
+    for name in param_names:
+        tensor = state_dict[name]
+        total_params += tensor.numel()
+        original_size = tensor.numel() * 2  # FP16 baseline
+        total_original += original_size
+        
+        if len(tensor.shape) == 2 and tensor.numel() > 1000:
+            compress_tensors.append(tensor)
+            compress_names.append(name)
+        else:
+            # Store non-compressed tensors as raw FP16 bytes
+            passthrough_tensors[name] = tensor.detach().half().cpu().numpy().tobytes()
+    
+    log(f"Compressing {len(compress_tensors)} weight matrices with codec '{codec}'...", 0.20)
+    
+    # Legacy compression removed - use QuantizationWrapper for quantization
+    raise RuntimeError(
+        f"Legacy compression codec '{codec}' is no longer supported. "
+        f"Use QuantizationWrapper from core.quantization instead. "
+        f"See examples/quantize_and_serve.py for migration guide."
+    )
+    
+    log(f"Writing {len(artifact_json['tensors'])} compressed chunks...", 0.70)
+    
+    # Build a map from tensor name to compressed data (hex-encoded in JSON)
+    tensor_map = {t["name"]: t for t in artifact_json["tensors"]}
     
     # Create manifest
     manifest = ArtifactManifest(
         model_id=model_id,
-        codec=codec,
+        codec=artifact_json["codec"],
         architecture=config.model_type,
         num_layers=getattr(config, "num_hidden_layers", 0),
         hidden_size=getattr(config, "hidden_size", 0),
         vocab_size=getattr(config, "vocab_size", 0),
     )
     
-    # Process each layer into chunks
     chunks = []
-    total_original = 0
     total_compressed = 0
-    total_params = 0
-    
-    state_dict = model.state_dict()
-    param_names = list(state_dict.keys())
     
     for i, name in enumerate(param_names):
-        progress = 0.20 + (i / len(param_names)) * 0.70
+        progress = 0.70 + (i / len(param_names)) * 0.25
         
-        tensor = state_dict[name]
-        total_params += tensor.numel()
-        original_size = tensor.numel() * tensor.element_size()
-        total_original += original_size
-        
-        # Determine layer type
+        # Determine layer type and index
         layer_type = None
         layer_index = None
         
@@ -272,9 +329,8 @@ def create_artifact(
         elif "lm_head" in name or "output" in name:
             layer_type = "lm_head"
         elif "layers." in name or "h." in name:
-            # Extract layer index
             parts = name.split(".")
-            for j, p in enumerate(parts):
+            for p in parts:
                 if p.isdigit():
                     layer_index = int(p)
                     break
@@ -285,44 +341,40 @@ def create_artifact(
             elif "norm" in name or "ln" in name:
                 layer_type = "norm"
         
-        # Compress if it's a weight matrix
-        if len(tensor.shape) == 2 and tensor.numel() > 1000:
-            # Apply compression
-            if codec == "int4_awq":
-                deq_weight, comp_ratio = compress_int4_awq(tensor, group_size=256)
-                compressed_data = deq_weight.numpy().tobytes()
-            else:
-                compressed_data = tensor.numpy().tobytes()
-                comp_ratio = 1.0
+        # Get chunk data
+        if name in tensor_map:
+            qt = tensor_map[name]
+            # Decode hex-encoded compressed data from JSON
+            chunk_data = bytes.fromhex(qt["data_hex"])
+            is_compressed = True
+        elif name in passthrough_tensors:
+            chunk_data = passthrough_tensors[name]
+            is_compressed = False
         else:
-            compressed_data = tensor.numpy().tobytes()
-            comp_ratio = 1.0
+            raise RuntimeError(f"Tensor '{name}' not found in compressed or passthrough tensors")
         
-        compressed_size = len(compressed_data)
+        compressed_size = len(chunk_data)
         total_compressed += compressed_size
         
         # Compute hash
-        chunk_hash = compute_chunk_hash(compressed_data)
+        chunk_hash = compute_chunk_hash(chunk_data)
         
-        # Save chunk
+        # Save chunk file
         chunk_filename = name.replace(".", "_") + ".bin"
         with open(chunks_path / chunk_filename, "wb") as f:
-            f.write(compressed_data)
+            f.write(chunk_data)
         
         # Add to manifest
         chunk_info = ChunkInfo(
             name=name,
             sha256=chunk_hash,
             size=compressed_size,
-            offset=0,  # Would be set in single-file mode
+            offset=0,
             layer_type=layer_type,
             layer_index=layer_index,
-            compression=codec if comp_ratio > 1 else None,
+            compression=codec if is_compressed else None,
         )
         chunks.append(chunk_info)
-        
-        if (i + 1) % 50 == 0:
-            log(f"Processed {i+1}/{len(param_names)} parameters", progress)
     
     log("Finalizing artifact...", 0.95)
     
@@ -339,11 +391,13 @@ def create_artifact(
     
     log(f"Artifact created: {output_path}", 1.0)
     log(f"  Chunks: {len(chunks)}")
+    log(f"  Compressed: {len(compress_tensors)} tensors")
+    log(f"  Passthrough: {len(passthrough_tensors)} tensors")
     log(f"  Compression: {manifest.compression_ratio:.2f}x")
     log(f"  Size: {total_compressed / 1e6:.1f} MB")
     
     # Cleanup
-    del model, state_dict
+    del model, state_dict, compress_tensors, passthrough_tensors
     
     artifact = TenPakArtifact(str(output_path))
     artifact.load()

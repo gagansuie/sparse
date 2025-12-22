@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tenpak"
-version = "0.1.0"
-description = "Model compression for LLMs - 7x+ compression with <2% quality loss"
+version = "0.2.0"
+description = "LLM quantization orchestration - wraps AutoGPTQ, AutoAWQ, bitsandbytes with delta compression and streaming"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
@@ -56,7 +56,7 @@ Repository = "https://github.com/gagansuie/tenpak"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core", "core.*", "studio", "studio.*", "cli", "cli.*", "optimizer", "optimizer.*", "artifact", "artifact.*"]
+include = ["core", "core.*", "studio", "studio.*", "cli", "cli.*", "optimizer", "optimizer.*", "artifact", "artifact.*", "deploy", "deploy.*", "inference", "inference.*"]
 
 [tool.black]
 line-length = 100

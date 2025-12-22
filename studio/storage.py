@@ -33,7 +33,8 @@ class ArtifactManifest:
     model_hash: str = ""  # SHA256 of original weights
     
     # Compression settings
-    codec: str = "int4_awq_v1"
+    quantization_method: str = "awq"  # gptq, awq, bitsandbytes
+    quantization_bits: int = 4
     target: str = "balanced"
     
     # Results
@@ -71,50 +72,50 @@ class ArtifactStorage:
         self,
         job_id: str,
         model_id: str,
-        compressed_weights: Dict[str, torch.Tensor],
-        allocations: Dict[str, Any],
+        quantized_model_path: str,
         metrics: Dict[str, float],
-        codec: str = "int4_awq_v1"
+        quantization_method: str = "awq",
+        quantization_bits: int = 4
     ) -> str:
-        """Save a compressed model artifact.
+        """Save a quantized model artifact.
         
         Args:
             job_id: Unique job identifier
             model_id: Original model ID
-            compressed_weights: Dict of layer_name -> compressed tensor
-            allocations: Layer allocation settings
+            quantized_model_path: Path to quantized model
             metrics: Compression metrics (compression_ratio, ppl, etc.)
-            codec: Codec used for compression
+            quantization_method: Method used (gptq, awq, bitsandbytes)
+            quantization_bits: Bit width (3, 4, 8)
             
         Returns:
             Path to saved artifact
         """
         artifact_path = os.path.join(self.base_path, job_id)
-        weights_path = os.path.join(artifact_path, "weights")
-        os.makedirs(weights_path, exist_ok=True)
+        os.makedirs(artifact_path, exist_ok=True)
         
         # Create manifest
         manifest = ArtifactManifest(
             model_id=model_id,
-            codec=codec,
+            quantization_method=quantization_method,
+            quantization_bits=quantization_bits,
             compression_ratio=metrics.get("compression_ratio", 1.0),
             baseline_ppl=metrics.get("baseline_ppl", 0.0),
             compressed_ppl=metrics.get("compressed_ppl", 0.0),
             ppl_delta=metrics.get("ppl_delta", 0.0),
-            num_layers=len(compressed_weights),
-            total_params=sum(w.numel() for w in compressed_weights.values()),
-            allocations={k: asdict(v) if hasattr(v, '__dict__') else v 
-                        for k, v in allocations.items()},
         )
         
-        # Save weights (single shard for now)
-        shard_path = os.path.join(weights_path, "shard_0.bin")
-        torch.save(compressed_weights, shard_path)
-        
-        manifest.num_shards = 1
-        manifest.shard_size_bytes = os.path.getsize(shard_path)
+        # Copy quantized model to artifact directory
+        import shutil
+        model_dest = os.path.join(artifact_path, "quantized_model")
+        if os.path.isdir(quantized_model_path):
+            shutil.copytree(quantized_model_path, model_dest, dirs_exist_ok=True)
+        else:
+            # Single file - create directory and copy
+            os.makedirs(model_dest, exist_ok=True)
+            shutil.copy(quantized_model_path, os.path.join(model_dest, "model.bin"))
         
         # Save manifest
+        manifest.created_at = datetime.utcnow().isoformat()
         manifest_path = os.path.join(artifact_path, "manifest.json")
         with open(manifest_path, "w") as f:
             json.dump(asdict(manifest), f, indent=2)

@@ -32,8 +32,8 @@ from .jobs import (
 
 app = FastAPI(
     title="TenPak Studio",
-    description="Model compression API for LLMs. Achieve 7x+ compression with <2% quality loss.",
-    version="0.1.0",
+    description="LLM Quantization Orchestration API. Wraps AutoGPTQ, AutoAWQ, bitsandbytes with intelligent optimization.",
+    version="0.2.0",
 )
 
 
@@ -169,15 +169,15 @@ async def root():
 
 @app.post("/compress", response_model=CompressResponse)
 async def compress(request: CompressRequest, background_tasks: BackgroundTasks):
-    """Start a model compression job.
+    """Start a model quantization job.
     
-    Creates a new job and starts compression in the background.
+    Creates a new job and starts quantization in the background.
     Poll /status/{job_id} to monitor progress.
     
-    Targets:
-    - **quality**: Conservative compression, best PPL (~5x compression)
-    - **balanced**: v10 config, good balance (~7x compression, <2% PPL)
-    - **size**: Aggressive compression, may have higher PPL (~8x+ compression)
+    Targets map to quantization presets:
+    - **quality**: GPTQ 4-bit (7-8x compression, <1% PPL, requires calibration)
+    - **balanced**: AWQ 4-bit (7-8x compression, <2% PPL, requires calibration)
+    - **size**: GPTQ 3-bit (10-12x compression, 3-5% PPL, requires calibration)
     """
     # Validate target
     valid_targets = ["quality", "balanced", "size"]
@@ -200,13 +200,13 @@ async def compress(request: CompressRequest, background_tasks: BackgroundTasks):
     return CompressResponse(
         job_id=job.id,
         status=job.status.value,
-        message=f"Compression job started. Poll /status/{job.id} for progress."
+        message=f"Quantization job started. Poll /status/{job.id} for progress."
     )
 
 
 @app.get("/status/{job_id}")
 async def status(job_id: str):
-    """Get the status of a compression job.
+    """Get the status of a quantization job.
     
     Returns current progress, metrics, and results when complete.
     """
@@ -220,9 +220,9 @@ async def status(job_id: str):
 
 @app.get("/artifact/{job_id}")
 async def artifact(job_id: str):
-    """Download the compressed artifact for a completed job.
+    """Download the quantized model artifact for a completed job.
     
-    Returns the compressed model artifact (weights + metadata).
+    Returns the quantized model artifact (weights + metadata).
     """
     job = get_job(job_id)
     
@@ -263,22 +263,30 @@ async def evaluate(request: EvaluateRequest):
     try:
         # Load model
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.float16 if device == "cuda" else torch.float32
         tokenizer = AutoTokenizer.from_pretrained(request.model_id)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         
         model = AutoModelForCausalLM.from_pretrained(
             request.model_id,
-            torch_dtype=torch.float16,
+            torch_dtype=dtype,
             device_map="auto" if device == "cuda" else None,
         )
         
         # Load eval data
         dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
-        texts = [item["text"] for item in dataset if len(item["text"]) > 100]
+        texts = (item.get("text", "") for item in dataset if len(item.get("text", "")) > 100)
         
         # Compute PPL
-        ppl = compute_ppl(model, tokenizer, texts, device, max_samples=request.num_samples)
+        ppl = compute_ppl(
+            model,
+            tokenizer,
+            texts,
+            device,
+            max_samples=request.num_samples,
+            streaming=(device == "cpu"),
+        )
         
         return EvaluateResponse(
             model_id=request.model_id,
@@ -292,7 +300,7 @@ async def evaluate(request: EvaluateRequest):
 
 @app.get("/jobs")
 async def get_jobs(limit: int = 10):
-    """List recent compression jobs.
+    """List recent quantization jobs.
     
     Returns the most recent jobs, sorted by creation time (newest first).
     """
@@ -301,10 +309,10 @@ async def get_jobs(limit: int = 10):
 
 @app.post("/optimize", response_model=OptimizeResponse)
 async def optimize(request: OptimizeRequest, background_tasks: BackgroundTasks):
-    """Find optimal compression config for a model.
+    """Find optimal quantization method for a model.
     
-    Benchmarks multiple compression candidates and selects the cheapest
-    one that meets the specified constraints (PPL, latency, throughput).
+    Benchmarks multiple quantization methods (GPTQ, AWQ, bitsandbytes) and 
+    selects the cheapest one that meets the specified constraints (PPL, latency, throughput).
     
     This is a synchronous operation that may take several minutes.
     """
@@ -346,7 +354,7 @@ async def optimize(request: OptimizeRequest, background_tasks: BackgroundTasks):
 
 @app.get("/optimize/candidates")
 async def list_candidates():
-    """List available compression candidates."""
+    """List available quantization candidates (presets)."""
     from optimizer import CANDIDATE_PRESETS
     
     return {

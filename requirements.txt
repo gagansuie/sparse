@@ -3,8 +3,24 @@ torch>=2.0.0
 transformers>=4.30.0
 datasets>=2.14.0
 tqdm>=4.65.0
+requests>=2.31.0
+
+# Quantization Tools (choose based on your needs)
+# Install at least one of these:
+# auto-gptq>=0.7.0  # For GPTQ quantization (CUDA required)
+# autoawq>=0.2.0    # For AWQ quantization (CUDA required)
+# bitsandbytes>=0.41.0  # For 8-bit/4-bit quantization
+
+# Inference Engines (optional)
+# vllm>=0.3.0       # For vLLM inference
+# accelerate>=0.25.0  # For Transformers inference
 
 # API Dependencies (optional, install with pip install -e ".[api]")
 # fastapi>=0.100.0
 # uvicorn>=0.23.0
 # pydantic>=2.0.0
+
+# Development Dependencies (optional)
+# pytest>=7.4.0
+# black>=23.0.0
+# mypy>=1.5.0

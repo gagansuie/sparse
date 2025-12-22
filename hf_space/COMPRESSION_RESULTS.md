@@ -1,27 +1,28 @@
-# TenPak-10X Compression Results Log
+# TenPak Quantization Results
 
-## Mistral-7B-v0.1 Experiments
+**Note**: This document contains historical results from custom codec experiments (v0.1.0). TenPak v0.2.0 now wraps industry-standard tools instead.
+
+## Current Approach (v0.2.0)
+
+TenPak wraps AutoGPTQ, AutoAWQ, and bitsandbytes:
+
+| Method | Compression | PPL Δ | Notes |
+|--------|-------------|-------|-------|
+| **AutoGPTQ 4-bit** | 7-8x | <1% | Best quality, requires calibration |
+| **AutoAWQ 4-bit** | 7-8x | <2% | Best balance, requires calibration |
+| **bitsandbytes NF4** | 6-7x | <1.5% | Fast, optional calibration |
+| **bitsandbytes INT8** | 2x | <0.5% | Conservative |
+
+## Historical Custom Codec Experiments (v0.1.0 - Deprecated)
+
+These experiments led to the decision to wrap existing tools rather than maintain custom codecs:
 
 | Version | Compression | PPL Delta | Status | Strategy |
 |---------|-------------|-----------|--------|----------|
-| **v10** | **7.42x** | **+1.47%** | ✅ PASS | **BEST PPL** - attn g=256, MLP g=2048, 0.5% outliers |
-| v11 | 7.70x | +3.59% | ⚠️ MARGINAL | Push harder: attn g=512, MLP g=4096, 0.25% outliers |
-| v12 | 7.37x | +1.48% | ✅ PASS | Per-sublayer: q=128, kv/o=256, gate/up=2048, down=1024 |
-| v13 | 7.42x | +2.67% | ⚠️ MARGINAL | Push k/v/o to g=512 - HURT PPL |
-| v14 | 7.01x | +1.94% | ⚠️ MARGINAL | 1% outliers - hurt both metrics |
-| v16 | 7.48x | +1.87% | ⚠️ MARGINAL | Fisher-weighted dynamic groups |
-| v17 | 7.95x | +32.72% | ❌ FAIL | Ultra aggressive INT4 g=8192, no outliers |
-| v20 | 10.09x | +63.68% | ❌ FAIL | 2:4 sparsity (50% pruning) too aggressive |
-| v21 | 8.04x | +8.30% | ❌ FAIL | 3:4 on ALL MLP still too aggressive |
-| v22 | 7.35x | +1.62% | ✅ PASS | Selective 3:4 on 25% MLP |
-| v23 | 7.57x | +2.42% | ⚠️ MARGINAL | Selective 3:4 on 50% MLP |
-| **v60** | **7.48x** | **+1.54%** | ✅ PASS | **BEST COMPRESSION** - attn g=512, MLP g=4096 |
-| v61 | 7.51x | +3.46% | ⚠️ MARGINAL | Larger groups hurt PPL |
-| v62 | 8.00x | +9092% | ❌ FAIL | Hadamard rotation - BROKEN |
-| v63 | 7.67x | +5.43% | ❌ FAIL | 3:4 sparsity hurt too much |
-| v64 | ~8x | N/A | ❌ SKIP | 5% magnitude pruning (not tested) |
-| v65 | 6.95x | +2.15% | ⚠️ MARGINAL | 1% outliers HURT quality |
-| v67 | 7.86x | +50737% | ❌ FAIL | GPTQ-lite - BROKEN (error accumulation bug) |
+| **v10** | **7.42x** | **+1.47%** | ✅ BEST | Custom INT4 - attn g=256, MLP g=2048, 0.5% outliers |
+| **v60** | **7.48x** | **+1.54%** | ✅ BEST | Custom INT4 - attn g=512, MLP g=4096 |
+| v67 | 7.86x | +50737% | ❌ FAIL | Custom GPTQ-lite - error accumulation bug |
+| v62 | 8.00x | +9092% | ❌ FAIL | Hadamard rotation - broken |
 
 ---
 

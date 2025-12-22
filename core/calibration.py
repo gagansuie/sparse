@@ -5,6 +5,8 @@ Collects Fisher information, activation scales, and Hessian diagonal
 for importance-aware quantization (AWQ/GPTQ style).
 """
 
+import itertools
+
 import torch
 import torch.nn as nn
 from typing import Dict, List, Tuple, Optional
@@ -78,7 +80,7 @@ def collect_calibration_stats(
     
     # Register hooks on Linear layers
     for name, module in model.named_modules():
-        if isinstance(module, nn.Linear):
+        if isinstance(module, nn.Linear) or module.__class__.__name__ == "Conv1D":
             h = module.register_forward_hook(make_hook(name))
             hooks.append(h)
     
@@ -146,7 +148,10 @@ def compute_ppl(
     tokenizer,
     texts: List[str],
     device: str = 'cuda',
-    max_samples: int = 100
+    max_samples: int = 100,
+    streaming: bool = False,
+    max_length: int = 512,
+    stride: int = 512,
 ) -> float:
     """Compute perplexity on evaluation texts.
     
@@ -165,23 +170,68 @@ def compute_ppl(
     total_tokens = 0
     
     with torch.no_grad():
-        for text in tqdm(texts[:max_samples], desc="Evaluating PPL"):
-            tokens = tokenizer(
-                text,
-                return_tensors="pt",
-                truncation=True,
-                max_length=512
-            ).to(device)
-            
-            if tokens.input_ids.shape[1] < 2:
-                continue
-            
-            try:
-                outputs = model(**tokens, labels=tokens.input_ids)
-                total_loss += outputs.loss.item() * tokens.input_ids.shape[1]
-                total_tokens += tokens.input_ids.shape[1]
-            except Exception:
-                continue
+        if streaming:
+            max_model_len = getattr(model.config, "max_position_embeddings", None)
+            if max_model_len is not None:
+                max_length = min(max_length, int(max_model_len))
+            if stride < 1:
+                stride = max_length
+            if stride > max_length:
+                stride = max_length
+
+            eval_texts = [
+                t for t in itertools.islice(texts, max_samples)
+                if isinstance(t, str) and t.strip()
+            ]
+            if not eval_texts:
+                return float('inf')
+
+            text = "\n\n".join(eval_texts)
+            encodings = tokenizer(text, return_tensors="pt")
+            input_ids_all = encodings["input_ids"][0]
+            seq_len = input_ids_all.size(0)
+            if seq_len < 2:
+                return float('inf')
+
+            prev_end = 0
+            for begin in tqdm(range(0, seq_len - 1, stride), desc="Evaluating PPL (streaming)"):
+                end = min(begin + max_length, seq_len)
+                trg_len = end - prev_end
+                if trg_len <= 0:
+                    break
+
+                input_ids = input_ids_all[begin:end].unsqueeze(0).to(device)
+                target_ids = input_ids.clone()
+                target_ids[:, :-trg_len] = -100
+
+                try:
+                    outputs = model(input_ids, labels=target_ids)
+                    total_loss += outputs.loss.item() * trg_len
+                    total_tokens += trg_len
+                except Exception:
+                    pass
+
+                prev_end = end
+                if end == seq_len:
+                    break
+        else:
+            for text in tqdm(itertools.islice(texts, max_samples), total=max_samples, desc="Evaluating PPL"):
+                tokens = tokenizer(
+                    text,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=max_length
+                ).to(device)
+                
+                if tokens.input_ids.shape[1] < 2:
+                    continue
+                
+                try:
+                    outputs = model(**tokens, labels=tokens.input_ids)
+                    total_loss += outputs.loss.item() * tokens.input_ids.shape[1]
+                    total_tokens += tokens.input_ids.shape[1]
+                except Exception:
+                    continue
     
     if total_tokens == 0:
         return float('inf')

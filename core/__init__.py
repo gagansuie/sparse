@@ -1,31 +1,39 @@
 """
-TenPak Core - Model Compression Engine
+TenPak Core Module
 
-Production-validated compression codecs for LLMs.
-Best results: 7.42x compression @ +1.47% PPL (Mistral-7B, v10 config)
+Quantization orchestration, calibration, delta compression, and optimization.
 
 Usage:
-    from tenpak.core import compress_model, evaluate_ppl
+    from core import QuantizationWrapper, QUANTIZATION_PRESETS
     
-    result = compress_model(
-        model_id="mistralai/Mistral-7B-v0.1",
-        target="quality",  # or "size", "speed"
-        device="cuda"
-    )
+    # Quantize a model
+    wrapper = QuantizationWrapper(method="gptq", bits=4)
+    quantized_model = wrapper.quantize(model_id)
+    
+    # Batch compression to JSON
+    artifact_json, ratio = compress_tensors_f32_json(tensors, codec, names=names)
 """
 
-from .codecs import (
-    compress_int4_awq,
-    compress_int4_residual,
-    compress_calibrated_vq,
-    CODEC_V10,
-    CODEC_V60,
-    V10_CONFIG,
-    V60_CONFIG,
-    CODEC_INT4_AWQ,
-    CODEC_INT4_RESIDUAL,
-    CODEC_CALIBRATED_VQ,
+# Quantization wrapper (recommended approach)
+from .quantization import (
+    QuantizationWrapper,
+    QuantizationConfig,
+    QuantizationMethod,
+    QUANTIZATION_PRESETS,
 )
+
+# Legacy Rust FFI (deprecated - use QuantizationWrapper instead)
+# Kept for backward compatibility
+from .native_ffi import (
+    roundtrip_tensor_f32,
+    compress_tensors_f32_json,
+    decompress_artifact_to_json,
+    decompress_artifact_to_tensors,
+)
+
+# Legacy codec constants (deprecated)
+CODEC_INT4_RESIDUAL = "int4_residual_v1"
+CODEC_INT4_OPT_LLAMA = "int4_opt_llama_v1"
 
 from .calibration import (
     collect_calibration_stats,
@@ -44,27 +52,26 @@ from .delta import (
     DeltaManifest,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
-    # Main codecs
-    "CODEC_V10",
-    "CODEC_V60",
-    "V10_CONFIG",
-    "V60_CONFIG",
-    # Compression functions
-    "compress_int4_awq",
-    "compress_int4_residual", 
-    "compress_calibrated_vq",
+    # Quantization wrapper (recommended)
+    "QuantizationWrapper",
+    "QuantizationConfig",
+    "QuantizationMethod",
+    "QUANTIZATION_PRESETS",
+    # Legacy Rust FFI (deprecated)
+    "roundtrip_tensor_f32",
+    "compress_tensors_f32_json",
+    "decompress_artifact_to_json",
+    "decompress_artifact_to_tensors",
+    "CODEC_INT4_RESIDUAL",
+    "CODEC_INT4_OPT_LLAMA",
     # Calibration
     "collect_calibration_stats",
     "compute_ppl",
     # Allocation
     "allocate_bits",
     "LayerAllocation",
-    # Codec identifiers
-    "CODEC_INT4_AWQ",
-    "CODEC_INT4_RESIDUAL",
-    "CODEC_CALIBRATED_VQ",
     # Delta compression
     "compress_delta",
     "reconstruct_from_delta",

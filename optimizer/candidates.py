@@ -2,7 +2,7 @@
 TenPak Optimizer - Candidate Generation
 
 Generates compression candidates for optimization.
-Each candidate is a specific codec + config combination.
+Uses industry-standard quantization tools (AutoGPTQ, AutoAWQ, bitsandbytes).
 """
 
 from dataclasses import dataclass, field
@@ -10,13 +10,11 @@ from typing import List, Dict, Any, Optional
 from enum import Enum
 
 
-class CompressionMethod(str, Enum):
-    """Available compression methods."""
-    INT4_AWQ = "int4_awq"
-    INT4_RESIDUAL = "int4_residual"
-    INT4_OPT = "int4_opt"
-    INT4_G8 = "int4_g8"
-    TENPAK_X = "tenpak_x"
+class QuantizationMethod(str, Enum):
+    """Available quantization methods (wrapping existing tools)."""
+    GPTQ = "gptq"
+    AWQ = "awq"
+    BITSANDBYTES = "bitsandbytes"
     FP16 = "fp16"  # Baseline
 
 
@@ -24,7 +22,7 @@ class CompressionMethod(str, Enum):
 class CompressionCandidate:
     """A compression candidate to benchmark."""
     name: str
-    method: CompressionMethod
+    method: QuantizationMethod
     config: Dict[str, Any] = field(default_factory=dict)
     
     # Expected characteristics (for filtering before benchmark)
@@ -45,79 +43,77 @@ class CompressionCandidate:
         return f"Candidate({self.name}, {self.method.value}, comp={self.expected_compression}x)"
 
 
-# Pre-defined candidate configurations based on validated results
+# Pre-defined candidate configurations using industry-standard tools
 CANDIDATE_PRESETS: Dict[str, CompressionCandidate] = {
     # Baseline
     "fp16": CompressionCandidate(
         name="FP16 Baseline",
-        method=CompressionMethod.FP16,
+        method=QuantizationMethod.FP16,
         config={},
         expected_compression=1.0,
         expected_ppl_delta=0.0,
         requires_calibration=False,
     ),
     
-    # Best quality (no calibration)
-    "int4_residual": CompressionCandidate(
-        name="INT4+Residual",
-        method=CompressionMethod.INT4_RESIDUAL,
-        config={"group_size": 16, "residual_group": 16, "iterations": 5},
-        expected_compression=5.3,
-        expected_ppl_delta=0.5,
-        requires_calibration=False,
-    ),
-    
-    # AWQ variants (require calibration)
-    "awq_g128": CompressionCandidate(
-        name="AWQ g=128",
-        method=CompressionMethod.INT4_AWQ,
-        config={"group_size": 128, "outlier_pct": 0.5, "iterations": 5},
-        expected_compression=6.5,
+    # GPTQ variants (AutoGPTQ)
+    "gptq_quality": CompressionCandidate(
+        name="GPTQ 4-bit g=128 (Quality)",
+        method=QuantizationMethod.GPTQ,
+        config={"bits": 4, "group_size": 128, "desc_act": False, "sym": True},
+        expected_compression=7.5,
         expected_ppl_delta=1.0,
         requires_calibration=True,
     ),
-    "awq_g256": CompressionCandidate(
-        name="AWQ g=256",
-        method=CompressionMethod.INT4_AWQ,
-        config={"group_size": 256, "outlier_pct": 0.5, "iterations": 5},
-        expected_compression=7.4,
+    "gptq_balanced": CompressionCandidate(
+        name="GPTQ 4-bit g=256 (Balanced)",
+        method=QuantizationMethod.GPTQ,
+        config={"bits": 4, "group_size": 256, "desc_act": False, "sym": True},
+        expected_compression=7.8,
         expected_ppl_delta=1.5,
         requires_calibration=True,
     ),
-    "awq_g512": CompressionCandidate(
-        name="AWQ g=512",
-        method=CompressionMethod.INT4_AWQ,
-        config={"group_size": 512, "outlier_pct": 0.5, "iterations": 5},
-        expected_compression=7.8,
+    "gptq_size": CompressionCandidate(
+        name="GPTQ 4-bit g=512 (Size)",
+        method=QuantizationMethod.GPTQ,
+        config={"bits": 4, "group_size": 512, "desc_act": False, "sym": True},
+        expected_compression=8.0,
         expected_ppl_delta=2.5,
         requires_calibration=True,
     ),
     
-    # Optimized INT4 (no calibration)
-    "int4_g8": CompressionCandidate(
-        name="INT4 g=8",
-        method=CompressionMethod.INT4_G8,
-        config={"group_size": 8, "iterations": 5},
-        expected_compression=4.0,
-        expected_ppl_delta=0.6,
-        requires_calibration=False,
+    # AWQ variants (AutoAWQ)
+    "awq_quality": CompressionCandidate(
+        name="AWQ 4-bit g=128 (Quality)",
+        method=QuantizationMethod.AWQ,
+        config={"bits": 4, "group_size": 128, "zero_point": True},
+        expected_compression=7.5,
+        expected_ppl_delta=0.8,
+        requires_calibration=True,
     ),
-    "int4_g16": CompressionCandidate(
-        name="INT4 g=16",
-        method=CompressionMethod.INT4_OPT,
-        config={"group_size": 16, "iterations": 5},
-        expected_compression=5.3,
-        expected_ppl_delta=1.0,
-        requires_calibration=False,
+    "awq_balanced": CompressionCandidate(
+        name="AWQ 4-bit g=256 (Balanced)",
+        method=QuantizationMethod.AWQ,
+        config={"bits": 4, "group_size": 256, "zero_point": True},
+        expected_compression=7.8,
+        expected_ppl_delta=1.2,
+        requires_calibration=True,
     ),
     
-    # TenPak-X (novel, no calibration)
-    "tenpak_x": CompressionCandidate(
-        name="TenPak-X",
-        method=CompressionMethod.TENPAK_X,
-        config={"rank": 32, "vec_dim": 4, "codebook_size": 256},
-        expected_compression=4.3,
-        expected_ppl_delta=0.5,
+    # bitsandbytes variants
+    "bnb_int8": CompressionCandidate(
+        name="bitsandbytes INT8",
+        method=QuantizationMethod.BITSANDBYTES,
+        config={"bits": 8, "llm_int8_threshold": 6.0},
+        expected_compression=2.0,
+        expected_ppl_delta=0.3,
+        requires_calibration=False,
+    ),
+    "bnb_nf4": CompressionCandidate(
+        name="bitsandbytes NF4",
+        method=QuantizationMethod.BITSANDBYTES,
+        config={"bits": 4},
+        expected_compression=7.5,
+        expected_ppl_delta=1.0,
         requires_calibration=False,
     ),
 }
@@ -199,7 +195,7 @@ def generate_custom_candidates(
         for g in group_sizes:
             if method == "awq":
                 # Estimate compression and PPL based on group size
-                compression = 32 / (4 + 32/g)  # INT4 + scales overhead
+                compression = 16 / (4 + 16/g)  # INT4 + scales overhead (vs FP16 baseline)
                 ppl_delta = 0.5 + (g / 256)  # Larger groups = more PPL
                 
                 candidates.append(CompressionCandidate(
@@ -211,7 +207,7 @@ def generate_custom_candidates(
                     requires_calibration=True,
                 ))
             elif method == "int4":
-                compression = 32 / (4 + 32/g)
+                compression = 16 / (4 + 16/g)
                 ppl_delta = 1.0 + (g / 128)
                 
                 candidates.append(CompressionCandidate(

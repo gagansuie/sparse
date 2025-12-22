@@ -154,7 +154,10 @@ def optimize_model(
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from datasets import load_dataset
     from core.calibration import compute_ppl, collect_calibration_stats
-    from core.codecs import compress_int4_awq, compress_int4_residual
+    from core.allocation import allocate_bits
+    
+    # Codec constant
+    CODEC_INT4_RESIDUAL = "int4_residual_v1"
     
     start_time = datetime.utcnow()
     
@@ -200,30 +203,51 @@ def optimize_model(
     # Load calibration data
     log("Loading calibration data...", 0.08)
     dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
-    texts = [item["text"] for item in dataset if len(item["text"]) > 100]
+    texts = []
+    need = max(128, num_eval_samples)
+    for item in dataset:
+        text = item.get("text", "")
+        if len(text) > 100:
+            texts.append(text)
+            if len(texts) >= need:
+                break
     eval_texts = texts[:num_eval_samples]
     
     # Load baseline model and compute baseline PPL
     log("Loading baseline model...", 0.10)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cpu" if hardware == "cpu" else ("cuda" if torch.cuda.is_available() else "cpu")
+    dtype = torch.float16 if device == "cuda" else torch.float32
     
     baseline_model = AutoModelForCausalLM.from_pretrained(
         model_id,
-        torch_dtype=torch.float16,
+        torch_dtype=dtype,
         device_map="auto" if device == "cuda" else None,
         low_cpu_mem_usage=True,
     )
     
     log("Computing baseline PPL...", 0.15)
-    baseline_ppl = compute_ppl(baseline_model, tokenizer, eval_texts)
+    baseline_ppl = compute_ppl(
+        baseline_model,
+        tokenizer,
+        eval_texts,
+        device=device,
+        max_samples=num_eval_samples,
+        streaming=(device == "cpu"),
+    )
     log(f"Baseline PPL: {baseline_ppl:.4f}", 0.20)
     
     # Collect calibration stats if needed
-    calibration_stats = None
+    fisher_scores = {}
+    activation_scales = {}
+    hessian_diags = {}
     if include_calibration:
         log("Collecting calibration stats...", 0.22)
-        calibration_stats = collect_calibration_stats(
-            baseline_model, tokenizer, texts[:128]
+        fisher_scores, activation_scales, hessian_diags, _ = collect_calibration_stats(
+            baseline_model,
+            tokenizer,
+            texts[:128],
+            num_samples=64,
+            device=device,
         )
         log("Calibration complete", 0.28)
     
@@ -239,7 +263,7 @@ def optimize_model(
             # Reload model fresh for each candidate
             model = AutoModelForCausalLM.from_pretrained(
                 model_id,
-                torch_dtype=torch.float16,
+                torch_dtype=dtype,
                 device_map="auto" if device == "cuda" else None,
                 low_cpu_mem_usage=True,
             )
@@ -252,26 +276,31 @@ def optimize_model(
                 pass
             elif candidate.method == CompressionMethod.INT4_AWQ:
                 # AWQ compression
-                act_scales = calibration_stats.get("activation_scales", {}) if calibration_stats else {}
+                act_scales = activation_scales
                 total_original = 0
                 total_compressed = 0
                 
                 for name, module in model.named_modules():
                     if hasattr(module, 'weight') and module.weight is not None:
-                        if len(module.weight.shape) == 2:  # Linear layers
+                        if len(module.weight.shape) == 2:  # Linear/Conv1D layers
                             weight = module.weight.data
+                            is_conv1d = module.__class__.__name__ == "Conv1D"
+                            codec_weight = weight.T.contiguous() if is_conv1d else weight
                             act_scale = act_scales.get(name)
                             
                             deq_weight, comp = compress_int4_awq(
-                                weight,
+                                codec_weight,
                                 group_size=candidate.config.get("group_size", 256),
                                 act_scale=act_scale,
                                 outlier_pct=candidate.config.get("outlier_pct", 0.5),
                             )
-                            
-                            module.weight.data = deq_weight
-                            total_original += weight.numel() * 4
-                            total_compressed += weight.numel() * 4 / comp
+ 
+                            if is_conv1d:
+                                deq_weight = deq_weight.T
+ 
+                            module.weight.data = deq_weight.to(weight.dtype)
+                            total_original += weight.numel() * 2
+                            total_compressed += weight.numel() * 2 / comp
                 
                 if total_compressed > 0:
                     compression_ratio = total_original / total_compressed
@@ -285,23 +314,85 @@ def optimize_model(
                     if hasattr(module, 'weight') and module.weight is not None:
                         if len(module.weight.shape) == 2:
                             weight = module.weight.data
+                            is_conv1d = module.__class__.__name__ == "Conv1D"
+                            codec_weight = weight.T.contiguous() if is_conv1d else weight
                             
                             deq_weight, comp = compress_int4_residual(
-                                weight,
+                                codec_weight,
                                 group_size=candidate.config.get("group_size", 16),
                                 residual_group=candidate.config.get("residual_group", 16),
                             )
-                            
-                            module.weight.data = deq_weight
-                            total_original += weight.numel() * 4
-                            total_compressed += weight.numel() * 4 / comp
+ 
+                            if is_conv1d:
+                                deq_weight = deq_weight.T
+ 
+                            module.weight.data = deq_weight.to(weight.dtype)
+                            total_original += weight.numel() * 2
+                            total_compressed += weight.numel() * 2 / comp
                 
+                if total_compressed > 0:
+                    compression_ratio = total_original / total_compressed
+
+            elif candidate.method == CompressionMethod.HYBRID_AWQ_VQ:
+                if not fisher_scores:
+                    raise RuntimeError("Hybrid candidate requires calibration stats (fisher_scores)")
+
+                allocations = allocate_bits(baseline_model, fisher_scores, target="v11")
+                modules_by_name = {n: m for n, m in model.named_modules()}
+                total_original = 0
+                total_compressed = 0
+
+                for layer_name, alloc in allocations.items():
+                    module = modules_by_name.get(layer_name)
+                    if module is None or not hasattr(module, "weight") or module.weight is None:
+                        continue
+
+                    weight = module.weight.data
+                    is_conv1d = module.__class__.__name__ == "Conv1D"
+                    codec_weight = weight.T.contiguous() if is_conv1d else weight
+                    if weight.dim() != 2:
+                        continue
+
+                    orig_size = weight.numel() * 2
+                    act_scale = activation_scales.get(layer_name)
+                    hessian_diag = hessian_diags.get(layer_name)
+
+                    if alloc.method == "calibrated_vq":
+                        deq_weight, comp = compress_calibrated_vq(
+                            codec_weight,
+                            vec_dim=alloc.vq_vec_dim,
+                            codebook_size=alloc.vq_codebook_size,
+                            hessian_diag=hessian_diag,
+                            act_scale=act_scale,
+                        )
+                    else:
+                        deq_weight, comp = compress_int4_awq(
+                            codec_weight,
+                            group_size=alloc.group_size,
+                            act_scale=act_scale,
+                            outlier_pct=candidate.config.get("awq_outlier_pct", 0.5),
+                        )
+
+                    if is_conv1d:
+                        deq_weight = deq_weight.T
+
+                    module.weight.data = deq_weight.to(weight.dtype)
+                    total_original += orig_size
+                    total_compressed += orig_size / comp
+
                 if total_compressed > 0:
                     compression_ratio = total_original / total_compressed
             
             # Compute compressed PPL
             log(f"  Computing PPL for {candidate.name}...", progress + 0.3 * progress_per_candidate)
-            compressed_ppl = compute_ppl(model, tokenizer, eval_texts)
+            compressed_ppl = compute_ppl(
+                model,
+                tokenizer,
+                eval_texts,
+                device=device,
+                max_samples=num_eval_samples,
+                streaming=(device == "cpu"),
+            )
             
             # Run benchmark
             log(f"  Benchmarking {candidate.name}...", progress + 0.6 * progress_per_candidate)

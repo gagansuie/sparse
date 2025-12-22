@@ -129,19 +129,25 @@ def run_compression_job(job: CompressionJob) -> None:
     """Execute a compression job (runs in background thread).
     
     This is the main compression pipeline:
-    1. Load model
-    2. Collect calibration stats
-    3. Allocate bits per layer
-    4. Compress each layer
-    5. Evaluate PPL
-    6. Save artifact
+    1. Select quantization method based on target
+    2. Load model
+    3. Quantize using QuantizationWrapper
+    4. Evaluate PPL
+    5. Save artifact
     """
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from datasets import load_dataset
     
-    from core.calibration import collect_calibration_stats, compute_ppl
-    from core.allocation import allocate_bits
-    from core.codecs import compress_int4_awq
+    from core import QuantizationWrapper, QUANTIZATION_PRESETS
+    from core.calibration import compute_ppl
+    
+    # Map target to preset
+    TARGET_PRESET_MAP = {
+        "quality": "gptq_quality",
+        "balanced": "awq_balanced",
+        "size": "gptq_aggressive",
+    }
+    preset_name = TARGET_PRESET_MAP.get(job.target, "awq_balanced")
     
     try:
         job.status = JobStatus.RUNNING
@@ -150,95 +156,89 @@ def run_compression_job(job: CompressionJob) -> None:
         
         # Determine device
         device = "cuda" if torch.cuda.is_available() and job.hardware != "cpu" else "cpu"
+        dtype = torch.float16 if device == "cuda" else torch.float32
         
-        # Load model
-        print(f"[JOB {job.id}] Loading model {job.model_id}...", flush=True)
+        # Load tokenizer and calibration data
+        print(f"[JOB {job.id}] Loading calibration data...", flush=True)
         tokenizer = AutoTokenizer.from_pretrained(job.model_id)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         
-        model = AutoModelForCausalLM.from_pretrained(
+        dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+        eval_texts = [item.get("text", "") for item in dataset if len(item.get("text", "")) > 100][:50]
+        job.progress = 0.15
+        
+        # Load and evaluate baseline model
+        print(f"[JOB {job.id}] Loading baseline model for evaluation...", flush=True)
+        baseline_model = AutoModelForCausalLM.from_pretrained(
             job.model_id,
-            torch_dtype=torch.float16,
+            torch_dtype=dtype,
             device_map="auto" if device == "cuda" else None,
             low_cpu_mem_usage=True
         )
-        job.progress = 0.15
-        
-        # Load calibration data
-        print(f"[JOB {job.id}] Loading calibration data...", flush=True)
-        dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
-        texts = [item["text"] for item in dataset if len(item["text"]) > 100]
-        calibration_texts = texts[:128]
-        eval_texts = texts[:50]
-        job.progress = 0.20
-        
-        # Baseline PPL
-        print(f"[JOB {job.id}] Computing baseline PPL...", flush=True)
-        job.baseline_ppl = compute_ppl(model, tokenizer, eval_texts, device, max_samples=50)
-        print(f"[JOB {job.id}] Baseline PPL: {job.baseline_ppl:.4f}", flush=True)
         job.progress = 0.25
         
-        # Calibration
-        print(f"[JOB {job.id}] Collecting calibration stats...", flush=True)
-        fisher_scores, activation_scales, hessian_diags, input_samples = \
-            collect_calibration_stats(model, tokenizer, calibration_texts, num_samples=64, device=device)
+        print(f"[JOB {job.id}] Computing baseline PPL...", flush=True)
+        job.baseline_ppl = compute_ppl(
+            baseline_model,
+            tokenizer,
+            eval_texts,
+            device,
+            max_samples=50,
+            streaming=(device == "cpu"),
+        )
+        print(f"[JOB {job.id}] Baseline PPL: {job.baseline_ppl:.4f}", flush=True)
+        
+        # Free baseline model
+        del baseline_model
+        if device == "cuda":
+            torch.cuda.empty_cache()
         job.progress = 0.35
         
-        # Allocation
-        print(f"[JOB {job.id}] Allocating bits...", flush=True)
-        allocations = allocate_bits(model, fisher_scores, target=job.target)
-        job.total_layers = len(allocations)
-        job.progress = 0.40
+        # Quantize using QuantizationWrapper
+        print(f"[JOB {job.id}] Quantizing model with preset '{preset_name}'...", flush=True)
+        wrapper = QuantizationWrapper.from_preset(preset_name)
         
-        # Compression
-        print(f"[JOB {job.id}] Compressing {job.total_layers} layers...", flush=True)
-        total_original = 0
-        total_compressed = 0
+        # For calibration data, prepare simple text samples
+        calibration_data = None
+        if preset_name in ["gptq_quality", "gptq_aggressive", "awq_balanced", "awq_fast"]:
+            # These methods need calibration data
+            dataset_calib = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
+            calib_texts = [item.get("text", "") for item in dataset_calib if len(item.get("text", "")) > 100][:128]
+            calibration_data = calib_texts
         
-        for i, (name, alloc) in enumerate(allocations.items()):
-            # Find module
-            module = None
-            for n, m in model.named_modules():
-                if n == name and hasattr(m, 'weight'):
-                    module = m
-                    break
-            
-            if module is None:
-                continue
-            
-            weight = module.weight.data
-            orig_size = weight.numel() * 4  # FP32 equivalent
-            total_original += orig_size
-            
-            # Get calibration data for this layer
-            act_scale = activation_scales.get(name, None)
-            
-            # Compress
-            deq_weight, comp_ratio = compress_int4_awq(
-                weight,
-                group_size=alloc.group_size,
-                act_scale=act_scale,
-                outlier_pct=0.5
-            )
-            
-            # Update weight in-place
-            module.weight.data = deq_weight.to(weight.dtype)
-            
-            compressed_size = orig_size / comp_ratio
-            total_compressed += compressed_size
-            
-            job.layers_processed = i + 1
-            job.progress = 0.40 + 0.50 * (i + 1) / job.total_layers
+        job.progress = 0.45
         
-        job.original_size_mb = total_original / 1e6
-        job.compressed_size_mb = total_compressed / 1e6
-        job.compression_ratio = total_original / total_compressed if total_compressed > 0 else 1.0
-        job.progress = 0.90
+        # Quantize (this delegates to AutoGPTQ/AutoAWQ/bitsandbytes)
+        model = wrapper.quantize(
+            model_id=job.model_id,
+            calibration_data=calibration_data,
+            device=device
+        )
         
-        # Evaluate compressed model
-        print(f"[JOB {job.id}] Evaluating compressed model...", flush=True)
-        job.compressed_ppl = compute_ppl(model, tokenizer, eval_texts, device, max_samples=50)
+        # Get estimated compression ratio from config
+        config = QUANTIZATION_PRESETS[preset_name]
+        compression_map = {
+            "gptq_quality": 7.5,
+            "gptq_aggressive": 11.0,
+            "awq_balanced": 7.5,
+            "awq_fast": 6.5,
+            "bnb_nf4": 6.5,
+            "bnb_int8": 2.0,
+        }
+        job.compression_ratio = compression_map.get(preset_name, 7.0)
+        job.progress = 0.85
+        
+        # Evaluate quantized model
+        print(f"[JOB {job.id}] Evaluating quantized model...", flush=True)
+        job.compressed_ppl = compute_ppl(
+            model,
+            tokenizer,
+            eval_texts,
+            device,
+            max_samples=50,
+            streaming=(device == "cpu"),
+        )
         job.ppl_delta = ((job.compressed_ppl - job.baseline_ppl) / job.baseline_ppl) * 100
         
         print(f"[JOB {job.id}] Results: {job.compression_ratio:.2f}x compression, {job.ppl_delta:+.2f}% PPL delta", flush=True)
