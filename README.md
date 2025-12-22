@@ -16,22 +16,33 @@
 
 ## What TenPak Does
 
-**TenPak solves two critical problems for model hosting platforms:**
+**TenPak solves three critical problems for model hosting platforms:**
 
-### 1. 📦 Delta Compression (Primary)
+### 1. 📦 Model Delta Compression (Primary)
 **Store fine-tuned models as 60-90% smaller deltas from base models**
 
 - ✅ **Unique feature** — no competitor offers this
-- 💰 **$20-25M/year savings** for platforms like HuggingFace
+- 💰 **$15-20M/year savings** for platforms like HuggingFace
 - 🚀 **10x faster downloads** for fine-tuned models
 - 📊 **96% storage reduction** for instruction-tuned models
 
-### 2. 🎯 Cost Optimizer (Secondary)
-**Auto-select the cheapest quantization method meeting your constraints**
+### 2. 📊 Dataset Delta Compression (NEW)
+**Store derivative datasets as 70-90% smaller deltas from base datasets**
+
+- ✅ **Unique feature** — first LLM dataset delta compression
+- 💰 **$10-15M/year savings** for dataset hosting
+- 📦 **75% average savings** for translations, versions, augmentations
+- 🎯 **500K+ datasets**, ~30% are derivatives
+
+### 3. 🎯 Smart Routing & Cost Optimizer
+**Auto-route requests to optimal models/hardware, recommend smaller models**
 
 - ✅ **Cross-tool benchmarking** — compares GPTQ, AWQ, bitsandbytes
-- 💡 **Reduces user confusion** — automated method selection
-- 💰 **30-50% cost savings** vs manual selection
+- 💡 **Intelligent routing** — route to cheapest hardware meeting SLA
+- 💰 **$5-10M/year savings** for inference platforms
+- 🤖 **Auto-recommend** smaller models when quality is acceptable
+
+**Total estimated savings: $30-45M/year for platforms like HuggingFace**
 
 ---
 
@@ -124,35 +135,24 @@ pip install -e ".[all]"
 ### CLI
 
 ```bash
-# PRIMARY: Delta compression for fine-tunes
+# Model delta compression
 tenpak delta compress meta-llama/Llama-2-7b my-org/llama-finetuned --output ./delta
 tenpak delta estimate meta-llama/Llama-2-7b my-org/llama-finetuned
 
-# SECONDARY: Cost optimizer (auto-select best method)
+# Dataset delta compression (NEW)
+tenpak delta-dataset compress squad squad_v2 --output ./dataset_delta
+tenpak delta-dataset estimate squad squad_v2
+
+# Smart routing (NEW)
+tenpak route meta-llama/Llama-2-70b "What is the capital of France?"
+
+# Cost optimizer
 tenpak optimize mistralai/Mistral-7B-v0.1 --max-ppl-delta 2.0 --min-compression 5.0
 ```
 
 ### Python API
 
-#### 1. Delta Compression (Primary Feature)
-
-```python
-from optimizer import optimize_model, OptimizationConstraints
-
-constraints = OptimizationConstraints(
-    max_ppl_delta=2.0,
-    max_latency_ms=100,
-    min_compression=5.0
-)
-
-result = optimize_model(
-    model_id="meta-llama/Llama-2-7b-hf",
-    constraints=constraints
-)
-
-print(f"Best method: {result.winner.method}")
-print(f"Cost: ${result.winner.cost_per_1m_tokens}")
-```
+#### 1. Model Delta Compression
 
 ```python
 from core.delta import compress_delta, estimate_delta_savings
@@ -170,6 +170,59 @@ delta_manifest = compress_delta(
     finetuned_model_id="my-org/llama-finetuned",
     output_dir="./delta"
 )
+```
+
+#### 2. Dataset Delta Compression (NEW)
+
+```python
+from core.dataset_delta import compress_dataset_delta, estimate_dataset_delta_savings
+
+# Estimate savings
+stats = estimate_dataset_delta_savings("squad", "squad_v2")
+print(f"Savings: {stats.savings_pct:.1f}%")  # Typical: 70-90%
+
+# Compress as delta
+manifest = compress_dataset_delta(
+    base_dataset_id="squad",
+    derivative_dataset_id="squad_v2",
+    output_dir="./dataset_delta"
+)
+```
+
+#### 3. Smart Routing (NEW)
+
+```python
+from optimizer.routing import suggest_optimal_model
+
+decision = suggest_optimal_model(
+    requested_model="meta-llama/Llama-2-70b-hf",
+    prompt="What is the capital of France?",
+    quality_threshold=0.85
+)
+
+print(f"Recommended: {decision.recommended_model}")
+print(f"Cost: ${decision.estimated_cost_per_1m_tokens:.2f} per 1M tokens")
+print(f"Reasoning: {decision.reasoning}")
+```
+
+#### 4. Cost Optimizer
+
+```python
+from optimizer import optimize_model, OptimizationConstraints
+
+constraints = OptimizationConstraints(
+    max_ppl_delta=2.0,
+    max_latency_ms=100,
+    min_compression=5.0
+)
+
+result = optimize_model(
+    model_id="meta-llama/Llama-2-7b-hf",
+    constraints=constraints
+)
+
+print(f"Best method: {result.winner.method}")
+print(f"Cost: ${result.winner.cost_per_1m_tokens}")
 ```
 
 ---

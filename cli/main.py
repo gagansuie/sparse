@@ -430,7 +430,7 @@ def cmd_deploy(args):
     return 1
 
 
-def cmd_delta(args):
+def cmd_delta_model(args):
     """Handle delta compression commands."""
     if args.delta_command == "compress":
         return cmd_delta_compress(args)
@@ -704,14 +704,151 @@ def cmd_native(args):
         return 1
 
 
+def cmd_delta_dataset(args):
+    """Dataset delta compression commands."""
+    from core.dataset_delta import (
+        estimate_dataset_delta_savings,
+        compress_dataset_delta,
+        reconstruct_from_dataset_delta
+    )
+    
+    if args.delta_dataset_cmd == "estimate":
+        print(f"Estimating dataset delta savings...")
+        print(f"  Base: {args.base}")
+        print(f"  Derivative: {args.derivative}")
+        print()
+        
+        stats = estimate_dataset_delta_savings(
+            base_dataset_id=args.base,
+            derivative_dataset_id=args.derivative,
+            sample_size=args.sample_size or 1000
+        )
+        
+        print("Results:")
+        print(f"  Base size: {stats.base_size_mb:.1f} MB")
+        print(f"  Derivative size: {stats.derivative_size_mb:.1f} MB")
+        print(f"  Delta size: {stats.delta_size_mb:.1f} MB")
+        print(f"  Savings: {stats.savings_pct:.1f}%")
+        print()
+        print(f"  Shared samples: {stats.num_shared_samples}")
+        print(f"  New samples: {stats.num_new_samples}")
+        
+    elif args.delta_dataset_cmd == "compress":
+        print(f"Compressing dataset as delta...")
+        print(f"  Base: {args.base}")
+        print(f"  Derivative: {args.derivative}")
+        print(f"  Output: {args.output}")
+        print()
+        
+        manifest = compress_dataset_delta(
+            base_dataset_id=args.base,
+            derivative_dataset_id=args.derivative,
+            output_dir=args.output
+        )
+        
+        print("\nDelta compression complete!")
+        print(f"  Savings: {manifest['size_stats']['savings_pct']:.1f}%")
+        
+    elif args.delta_dataset_cmd == "reconstruct":
+        print(f"Reconstructing dataset from delta...")
+        print(f"  Delta dir: {args.delta_dir}")
+        print()
+        
+        dataset = reconstruct_from_dataset_delta(args.delta_dir)
+        
+        print("Reconstruction complete!")
+        for split in dataset.keys():
+            print(f"  {split}: {len(dataset[split])} samples")
+    
+    return 0
+
+
+def cmd_route(args):
+    """Smart model routing and recommendation."""
+    from optimizer.routing import suggest_optimal_model
+    
+    print(f"Analyzing request for optimal routing...")
+    print(f"  Requested model: {args.model}")
+    print(f"  Prompt: {args.prompt[:100]}..." if len(args.prompt) > 100 else f"  Prompt: {args.prompt}")
+    print()
+    
+    decision = suggest_optimal_model(
+        requested_model=args.model,
+        prompt=args.prompt,
+        quality_threshold=args.quality_threshold or 0.85,
+        cost_priority=not args.prioritize_latency
+    )
+    
+    print("Routing Decision:")
+    print(f"  Recommended model: {decision.recommended_model}")
+    print(f"  Hardware: {decision.recommended_hardware.hardware_name}")
+    print(f"  Estimated cost: ${decision.estimated_cost_per_1m_tokens:.2f} per 1M tokens")
+    print(f"  Estimated latency (p99): {decision.estimated_latency_p99_ms:.0f}ms")
+    print(f"  Quality score: {decision.quality_score:.2%}")
+    print(f"\n  Reasoning: {decision.reasoning}")
+    
+    if decision.alternatives:
+        print("\nAlternatives:")
+        for i, alt in enumerate(decision.alternatives[:3], 1):
+            print(f"  {i}. {alt['model']} on {alt['hardware']}")
+            print(f"     Cost: ${alt['cost']:.2f}/1M tokens, Quality: {alt['quality']:.2%}")
+    
+    return 0
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
         prog="tenpak",
-        description="TenPak - Model compression for LLMs"
+        description="TenPak - Delta Compression + Cost Optimizer for Model Hubs"
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    
+    # delta-dataset command (NEW)
+    delta_dataset_parser = subparsers.add_parser(
+        "delta-dataset",
+        help="Dataset delta compression"
+    )
+    delta_dataset_subparsers = delta_dataset_parser.add_subparsers(
+        dest="delta_dataset_cmd",
+        help="Dataset delta commands"
+    )
+    
+    # delta-dataset estimate
+    ds_estimate = delta_dataset_subparsers.add_parser(
+        "estimate",
+        help="Estimate savings from dataset delta compression"
+    )
+    ds_estimate.add_argument("base", help="Base dataset ID")
+    ds_estimate.add_argument("derivative", help="Derivative dataset ID")
+    ds_estimate.add_argument("--sample-size", type=int, help="Number of samples to analyze")
+    
+    # delta-dataset compress
+    ds_compress = delta_dataset_subparsers.add_parser(
+        "compress",
+        help="Compress derivative dataset as delta"
+    )
+    ds_compress.add_argument("base", help="Base dataset ID")
+    ds_compress.add_argument("derivative", help="Derivative dataset ID")
+    ds_compress.add_argument("--output", "-o", required=True, help="Output directory")
+    
+    # delta-dataset reconstruct
+    ds_reconstruct = delta_dataset_subparsers.add_parser(
+        "reconstruct",
+        help="Reconstruct dataset from delta"
+    )
+    ds_reconstruct.add_argument("delta_dir", help="Delta directory")
+    
+    # route command (NEW)
+    route_parser = subparsers.add_parser(
+        "route",
+        help="Smart model routing and recommendation"
+    )
+    route_parser.add_argument("model", help="Requested model ID")
+    route_parser.add_argument("prompt", help="User prompt")
+    route_parser.add_argument("--quality-threshold", type=float, help="Minimum quality (0-1)")
+    route_parser.add_argument("--prioritize-latency", action="store_true", help="Prioritize latency over cost")
     
     # pack command
     pack_parser = subparsers.add_parser("pack", help="Compress a model")
@@ -1016,12 +1153,16 @@ def main():
         return cmd_optimize(args)
     elif args.command == "deploy":
         return cmd_deploy(args)
-    elif args.command == "native":
-        return cmd_native(args)
     elif args.command == "delta":
-        return cmd_delta(args)
+        return cmd_delta_model(args)
+    elif args.command == "delta-dataset":
+        return cmd_delta_dataset(args)
+    elif args.command == "route":
+        return cmd_route(args)
     elif args.command == "artifact":
         return cmd_artifact(args)
+    elif args.command == "native":
+        return cmd_native(args)
     else:
         parser.print_help()
         return 1
