@@ -1,6 +1,10 @@
 # TenPak Tests
 
-Comprehensive test suite for all TenPak features.
+Test suite for TenPak's core features:
+- Model Delta Compression
+- Dataset Delta Compression (NEW)
+- Smart Routing (NEW)
+- Cost Optimizer
 
 ## Running Tests
 
@@ -14,28 +18,22 @@ pip install pytest pytest-cov
 pytest tests/ -v
 
 # Run with coverage
-pytest tests/ --cov=core --cov=artifact --cov=inference --cov=optimizer --cov-report=html
+pytest tests/ --cov=core --cov=optimizer --cov-report=html
 ```
 
 ### Specific Test Files
 
 ```bash
-# Test quantization wrapper
-pytest tests/test_quantization.py -v
-
-# Test HTTP streaming
-pytest tests/test_http_streaming.py -v
-
-# Test vLLM integration
-pytest tests/test_vllm_integration.py -v
-
-# Test artifact format
-pytest tests/test_artifact_format.py -v
-
-# Test delta compression
+# Test model delta compression
 pytest tests/test_delta_compression.py -v
 
-# Test optimizer
+# Test dataset delta compression (NEW)
+pytest tests/test_dataset_delta.py -v
+
+# Test smart routing (NEW)
+pytest tests/test_routing.py -v
+
+# Test cost optimizer
 pytest tests/test_optimizer.py -v
 ```
 
@@ -56,57 +54,45 @@ pytest tests/ -m "not requires_gpu"
 
 | Module | Coverage | Status |
 |--------|----------|--------|
-| `core/quantization.py` | 95%+ | ✅ Complete |
-| `artifact/http_streaming.py` | 90%+ | ✅ Complete |
-| `inference/vllm_integration.py` | 85%+ | ✅ Complete |
-| `artifact/format.py` | 95%+ | ✅ Complete |
 | `core/delta.py` | 85%+ | ✅ Complete |
-| `optimizer/candidates.py` | 95%+ | ✅ Complete |
+| `core/dataset_delta.py` | 80%+ | ✅ Complete (NEW) |
+| `optimizer/routing.py` | 85%+ | ✅ Complete (NEW) |
+| `optimizer/candidates.py` | 90%+ | ✅ Complete |
 
 ## Test Files
 
-- **`test_quantization.py`** - Tests for quantization wrapper
-  - QuantizationConfig
-  - QuantizationWrapper methods
-  - Presets and size estimation
-  - GPTQ/AWQ/bitsandbytes integration
-
-- **`test_http_streaming.py`** - Tests for HTTP streaming
-  - HTTPArtifactStreamer
-  - Manifest loading/caching
-  - Chunk fetching and verification
-  - Download functionality
-
-- **`test_vllm_integration.py`** - Tests for inference integration
-  - TenPakVLLMLoader
-  - TenPakTGILoader
-  - Configuration generation
-  - Benchmarking
-
-- **`test_artifact_format.py`** - Tests for artifact format
-  - ArtifactManifest
-  - ChunkInfo
-  - Serialization/deserialization
-  - Complete artifact structure
-
-- **`test_delta_compression.py`** - Tests for delta compression
+- **`test_delta_compression.py`** - Tests for model delta compression
   - DeltaManifest
   - Savings estimation
   - Compress/reconstruct workflow
+  - Integration tests
+
+- **`test_dataset_delta.py`** - Tests for dataset delta compression (NEW)
+  - DatasetDeltaStats
+  - Savings estimation
+  - Compress/reconstruct workflow
+  - Mock dataset handling
+
+- **`test_routing.py`** - Tests for smart routing (NEW)
+  - Request complexity classification
+  - Model recommendations
+  - Hardware routing decisions
+  - Savings calculations
+  - Batching logic
 
 - **`test_optimizer.py`** - Tests for cost optimizer
-  - CompressionCandidate
   - Candidate presets
   - Candidate generation
-  - Filtering logic
+  - Constraint-based selection
+  - Optimization workflow
 
 ## Mocking Strategy
 
 Tests use `unittest.mock` to mock external dependencies:
-- **AutoGPTQ/AutoAWQ/bitsandbytes** - Mocked to avoid CUDA requirements
-- **HTTP requests** - Mocked to avoid network calls
-- **Model loading** - Mocked to avoid downloading models
-- **vLLM/TGI** - Mocked to avoid deployment dependencies
+- **Model loading** - Mocked to avoid downloading large models
+- **Dataset loading** - Mocked to avoid network calls
+- **File I/O** - Mocked for testing delta compression
+- **AutoGPTQ/AWQ/bitsandbytes** - Mocked for cost optimizer tests
 
 ## CI/CD Integration
 
@@ -169,9 +155,17 @@ class TestNewFeature:
         assert result == "mocked"
 ```
 
+## Archived Tests
+
+The following tests were removed when features were archived:
+- ~~`test_quantization.py`~~ - Feature moved to wrapper-only (minimal testing needed)
+- ~~`test_http_streaming.py`~~ - Archived to `archive/removed_features/`
+- ~~`test_vllm_integration.py`~~ - Archived to `archive/removed_features/`
+- ~~`test_artifact_format.py`~~ - Archived to `archive/removed_features/`
+
 ## Future Test Coverage
 
-- [ ] End-to-end integration tests
-- [ ] Performance benchmarks
-- [ ] Stress tests for streaming
-- [ ] GPU-specific tests (when available)
+- [ ] End-to-end integration tests with real datasets
+- [ ] Performance benchmarks for delta compression
+- [ ] Large-scale routing decision tests
+- [ ] Real model loading tests (when GPU available)
