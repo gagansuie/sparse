@@ -1,10 +1,10 @@
 """
-TenPak Quantization Wrapper
+Sparse Quantization Wrapper
 
 Wraps industry-standard quantization tools (AutoGPTQ, AutoAWQ, bitsandbytes)
 instead of implementing custom codecs.
 
-TenPak focuses on:
+Sparse focuses on:
 - Delta compression for fine-tunes
 - Streaming artifact format
 - Cost optimization (benchmarking different methods)

@@ -1,7 +1,7 @@
 """
-TenPak CLI - Main entry point
+Sparse CLI - Main entry point
 
-Command-line tool for model compression.
+Command-line tool for delta compression and smart routing.
 """
 
 import argparse
@@ -16,7 +16,7 @@ def cmd_pack(args):
     from core import QuantizationWrapper
     from artifact.format import create_artifact
     
-    print(f"TenPak Pack - Quantizing {args.model_id}")
+    print(f"Sparse Pack - Quantizing {args.model_id}")
     print(f"  Preset: {args.preset}")
     print(f"  Output: {args.output or 'auto'}")
     print()
@@ -26,7 +26,7 @@ def cmd_pack(args):
         output_path = args.output
     else:
         model_name = args.model_id.replace("/", "_")
-        output_path = f"tenpak_{model_name}_{args.preset}.tnpk"
+        output_path = f"sparse_{model_name}_{args.preset}.tnpk"
     
     try:
         # Step 1: Quantize using wrapper
@@ -65,13 +65,13 @@ def cmd_pack_legacy(args):
     """DEPRECATED: Legacy compression command removed. Use QuantizationWrapper instead."""
     print("❌ ERROR: Legacy compression command is no longer supported.")
     print()
-    print("The custom Rust compression codecs have been removed in TenPak v0.2.0.")
-    print("TenPak now wraps industry-standard quantization tools instead.")
+    print("The custom Rust compression codecs have been removed in Sparse v0.2.0.")
+    print("Sparse now wraps industry-standard quantization tools instead.")
     print()
     print("Please use one of these commands instead:")
     print()
     print("  # Quantize with a preset:")
-    print("  tenpak pack <model> --preset awq_balanced")
+    print("  sparse pack <model> --preset awq_balanced")
     print()
     print("  # Available presets:")
     print("  - gptq_quality, gptq_balanced, gptq_aggressive")
@@ -79,7 +79,7 @@ def cmd_pack_legacy(args):
     print("  - bnb_nf4, bnb_int8")
     print()
     print("  # Or use the optimizer to auto-select:")
-    print("  tenpak optimize <model> --max-ppl-delta 2.0")
+    print("  sparse optimize <model> --max-ppl-delta 2.0")
     print()
     return 1
 
@@ -92,7 +92,7 @@ def cmd_eval(args):
     
     from core.calibration import compute_ppl
     
-    print(f"TenPak Eval - Evaluating {args.model_id}")
+    print(f"Sparse Eval - Evaluating {args.model_id}")
     print(f"  Samples: {args.samples}")
     print()
     
@@ -149,7 +149,7 @@ def cmd_info(args):
     # Try to load manifest
     manifest_path = os.path.join(args.artifact_path, "manifest.json")
     if not os.path.exists(manifest_path):
-        print(f"Error: Not a valid TenPak artifact (no manifest.json)")
+        print(f"Error: Not a valid Sparse artifact (no manifest.json)")
         return 1
     
     with open(manifest_path, "r") as f:
@@ -178,7 +178,7 @@ def cmd_optimize(args):
     """Find optimal compression config."""
     from optimizer import optimize_model, OptimizationConstraints, CANDIDATE_PRESETS
     
-    print(f"TenPak Optimize - Finding optimal config for {args.model_id}")
+    print(f"Sparse Optimize - Finding optimal config for {args.model_id}")
     print(f"  Hardware: {args.hardware}")
     print(f"  Constraints:")
     print(f"    Max PPL Delta: {args.max_ppl_delta}%")
@@ -291,7 +291,7 @@ def cmd_deploy(args):
 
     engine = backend.engine if backend else args.engine
 
-    print(f"TenPak Deploy - Generating deployment package for {args.model_id}")
+    print(f"Sparse Deploy - Generating deployment package for {args.model_id}")
     print(f"  Hardware: {args.hardware}")
     print(f"  Engine:   {engine}")
     print(f"  Backend:  {backend_id or 'none'}")
@@ -341,7 +341,7 @@ def cmd_deploy(args):
     else:
         model_name = args.model_id.replace("/", "_")
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        output_dir = Path(f"tenpak_deploy_{model_name}_{ts}")
+        output_dir = Path(f"sparse_deploy_{model_name}_{ts}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -439,7 +439,7 @@ def cmd_delta_model(args):
     elif args.delta_command == "estimate":
         return cmd_delta_estimate(args)
     else:
-        print("Usage: tenpak delta {compress|reconstruct|estimate}")
+        print("Usage: sparse delta {compress|reconstruct|estimate}")
         return 1
 
 
@@ -447,7 +447,7 @@ def cmd_delta_compress(args):
     """Compress fine-tune as delta from base model."""
     from core.delta import compress_delta
     
-    print(f"TenPak Delta Compress")
+    print(f"Sparse Delta Compress")
     print(f"  Base model:     {args.base_model}")
     print(f"  Fine-tune:      {args.finetune_model}")
     print(f"  Output:         {args.output}")
@@ -488,7 +488,7 @@ def cmd_delta_reconstruct(args):
     """Reconstruct model from base + delta."""
     from core.delta import reconstruct_from_delta
     
-    print(f"TenPak Delta Reconstruct")
+    print(f"Sparse Delta Reconstruct")
     print(f"  Base model:     {args.base_model}")
     print(f"  Delta path:     {args.delta_path}")
     print()
@@ -528,7 +528,7 @@ def cmd_delta_estimate(args):
     """Estimate delta compression savings."""
     from core.delta import estimate_delta_savings
     
-    print(f"TenPak Delta Estimate")
+    print(f"Sparse Delta Estimate")
     print(f"  Base model:     {args.base_model}")
     print(f"  Fine-tune:      {args.finetune_model}")
     print()
@@ -565,7 +565,7 @@ def cmd_artifact(args):
     elif args.artifact_command == "sign":
         return cmd_artifact_sign(args)
     else:
-        print("Usage: tenpak artifact {create|info|verify|sign}")
+        print("Usage: sparse artifact {create|info|verify|sign}")
         return 1
 
 
@@ -574,7 +574,7 @@ def cmd_artifact_create(args):
     from artifact import create_artifact
     from core import QuantizationWrapper
     
-    print(f"TenPak Artifact Create")
+    print(f"Sparse Artifact Create")
     print(f"  Model:  {args.model_id}")
     print(f"  Output: {args.output}")
     print(f"  Preset: {args.preset}")
@@ -685,7 +685,7 @@ def cmd_artifact_sign(args):
 
 
 def cmd_native(args):
-    from core.native import NativeTenpakNotFoundError, run_native_tenpak
+    from core.native import NativeSparseNotFoundError, run_native_sparse
 
     native_args = list(args.native_args or [])
     if native_args and native_args[0] == "--":
@@ -694,9 +694,9 @@ def cmd_native(args):
         native_args = ["--help"]
 
     try:
-        proc = run_native_tenpak(native_args, bin_path=args.native_bin)
+        proc = run_native_sparse(native_args, bin_path=args.native_bin)
         return proc.returncode
-    except NativeTenpakNotFoundError as e:
+    except NativeSparseNotFoundError as e:
         print(f"Error: {e}")
         return 1
     except Exception as e:
@@ -799,8 +799,8 @@ def cmd_route(args):
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        prog="tenpak",
-        description="TenPak - Delta Compression + Cost Optimizer for Model Hubs"
+        prog="sparse",
+        description="Sparse - Delta Compression + Smart Routing for Model Hubs ($30-45M/year savings)"
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -1065,16 +1065,16 @@ def main():
     )
 
     # native command
-    native_parser = subparsers.add_parser("native", help="Run native tenpak binary")
+    native_parser = subparsers.add_parser("native", help="Run native sparse binary")
     native_parser.add_argument(
         "--bin",
         dest="native_bin",
-        help="Path to the native tenpak binary (overrides TENPAK_NATIVE_BIN)"
+        help="Path to the native sparse binary (overrides SPARSE_NATIVE_BIN)"
     )
     native_parser.add_argument(
         "native_args",
         nargs=argparse.REMAINDER,
-        help="Arguments passed through to native tenpak (e.g. compress -i in.json -o out.bin)"
+        help="Arguments passed through to native sparse (e.g. compress -i in.json -o out.bin)"
     )
     
     # delta command

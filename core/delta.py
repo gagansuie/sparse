@@ -1,5 +1,5 @@
 """
-TenPak Core - Delta Compression for Fine-tunes
+Sparse Core - Delta Compression for Fine-tunes
 
 Efficiently stores fine-tuned models as deltas from base models.
 Achieves 80-95% storage reduction for fine-tunes.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TenPak Feature Verification Script
+Sparse Feature Verification Script
 
 Tests all 5 main features:
 1. Model Delta Compression
@@ -295,11 +295,11 @@ def test_artifact():
                 f.write(test_data)
             print(f"✅ Chunk saved")
             
-            # Load and verify using TenPakArtifact
-            from artifact import TenPakArtifact
-            loaded = TenPakArtifact(str(artifact_path))
+            # Load and verify using SparseArtifact
+            from artifact import SparseArtifact
+            loaded = SparseArtifact(str(artifact_path))
             loaded.load()
-            print(f"✅ TenPakArtifact loaded: {loaded.manifest.model_id}")
+            print(f"✅ SparseArtifact loaded: {loaded.manifest.model_id}")
             
             # Verify
             is_valid = loaded.verify()
@@ -324,12 +324,12 @@ def test_cli():
         
         # Test help commands
         commands = [
-            ["tenpak", "--help"],
-            ["tenpak", "pack", "--help"],
-            ["tenpak", "optimize", "--help"],
-            ["tenpak", "deploy", "--help"],
-            ["tenpak", "delta", "--help"],
-            ["tenpak", "artifact", "--help"],
+            ["sparse", "--help"],
+            ["sparse", "pack", "--help"],
+            ["sparse", "optimize", "--help"],
+            ["sparse", "deploy", "--help"],
+            ["sparse", "delta", "--help"],
+            ["sparse", "artifact", "--help"],
         ]
         
         for cmd in commands:
@@ -391,7 +391,7 @@ def test_full_model(model_id: str = "gpt2"):
 
 def main():
     print("="*60)
-    print("TENPAK FEATURE VERIFICATION")
+    print("SPARSE FEATURE VERIFICATION")
     print("="*60)
     
     full_test = "--full" in sys.argv

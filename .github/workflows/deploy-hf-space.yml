@@ -1,11 +1,13 @@
-name: Deploy to HF Space
+name: Deploy Public Demo to HF Space
+
+# IMPORTANT: This deploys DEMO ONLY (no proprietary source code)
+# Demo uses mock data to showcase features without exposing IP
 
 on:
   push:
     branches: [main]
     paths:
       - 'hf_space/**'
-      - 'core/**'
   workflow_dispatch:
 
 jobs:
@@ -17,24 +19,36 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Prepare HF Space directory
+      - name: Prepare HF Space directory (DEMO ONLY)
         run: |
           # Create temp directory for the space
           mkdir -p /tmp/hf-space
           
-          # Copy hf_space app files
+          # IMPORTANT: Only copy demo app (uses MOCK DATA)
+          # NO proprietary source code is deployed publicly
           cp hf_space/app.py /tmp/hf-space/
           cp hf_space/README.md /tmp/hf-space/
           cp hf_space/requirements.txt /tmp/hf-space/
           
-          # Copy TenPak core modules (needed for imports)
-          cp -r core /tmp/hf-space/
-          cp -r optimizer /tmp/hf-space/
+          # Add disclaimer to README
+          cat >> /tmp/hf-space/README.md << 'EOF'
           
-          # Append TenPak dependencies to requirements
-          printf "\n# TenPak dependencies\n" >> /tmp/hf-space/requirements.txt
-          echo "torch>=2.0.0" >> /tmp/hf-space/requirements.txt
-          echo "transformers>=4.30.0" >> /tmp/hf-space/requirements.txt
+          ---
+          
+          ## ⚠️ Demo Only
+          
+          This is a **demonstration** using mock data to showcase Sparse's capabilities.
+          
+          The actual Sparse library is **proprietary software** and not publicly available.
+          
+          **For licensing inquiries:**
+          - **Sparse Labs**
+          - **Email:** gagan.suie@sparselabs.ai
+          - **Website:** https://sparselabs.ai
+          EOF
+          
+          # Add watermark to app
+          sed -i '1i# DEMO VERSION - Proprietary software not included\n' /tmp/hf-space/app.py
       
       - name: Push to HuggingFace Space
         env:
@@ -49,6 +63,6 @@ jobs:
           git init
           git checkout -b main
           git add .
-          git commit -m "Deploy TenPak demo from GitHub Actions"
+          git commit -m "Deploy Sparse demo (public version) from GitHub Actions"
           
           git push --force https://user:$HF_TOKEN@huggingface.co/spaces/$HF_SPACE_ID main

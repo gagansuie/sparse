@@ -7,7 +7,7 @@ from pathlib import Path
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-id", default="sshleifer/tiny-gpt2")
-    parser.add_argument("--output", default="tenpak_demo_deploy_out")
+    parser.add_argument("--output", default="sparse_demo_deploy_out")
     parser.add_argument("--engine", default="tgi")
     parser.add_argument("--hardware", default="cpu")
     parser.add_argument("--backend", default=None)

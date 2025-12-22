@@ -29,11 +29,8 @@ venv/
 *.log
 
 # Project-specific
-/.tenpak-eval-venv/
 /models/
 /tmp_eval/
-/.tenpak-scripts-tmp/
-tenpak*.tar.gz
 /offload_tmp/
 
 # Archive (old experiments - keep in git but ignore changes)

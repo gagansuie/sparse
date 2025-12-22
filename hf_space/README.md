@@ -1,5 +1,5 @@
 ---
-title: TenPak - $30-45M/year Savings Demo
+title: Sparse - $30-45M/year Savings Demo
 emoji: 🚀
 colorFrom: blue
 colorTo: purple
@@ -9,7 +9,7 @@ app_file: app.py
 pinned: false
 ---
 
-# TenPak - Delta Compression + Smart Routing for Model Hubs
+# Sparse - Delta Compression + Smart Routing for Model Hubs
 
 **Interactive demo showcasing $30-45M/year in savings for platforms like HuggingFace.**
 
@@ -46,7 +46,7 @@ Auto-route inference requests to optimal models/hardware.
 
 ### 💰 Cost Optimizer
 - Set your constraints (max PPL delta, min compression)
-- See which method TenPak would auto-select
+- See which method Sparse would auto-select
 - Compare against alternative methods
 - **Saves 30-40% vs manual selection**
 
@@ -56,8 +56,8 @@ Auto-route inference requests to optimal models/hardware.
 - **Unique feature: 60-90% savings** (no competitors offer this)
 
 ### ⚖️ Feature Comparison
-- TenPak vs AutoGPTQ, AutoAWQ, bitsandbytes
-- See what makes TenPak different (orchestration, not algorithms)
+- Sparse vs AutoGPTQ, AutoAWQ, bitsandbytes
+- See what makes Sparse different (orchestration, not algorithms)
 
 ## Total Savings for HuggingFace Scale
 
@@ -68,7 +68,7 @@ Auto-route inference requests to optimal models/hardware.
 | Smart routing | $5-10M |
 | **Total** | **$30-45M/year** |
 
-## Why TenPak is Unique
+## Why Sparse is Unique
 
 **No competitor offers:**
 - ✅ LLM model delta compression at scale
@@ -80,7 +80,7 @@ Auto-route inference requests to optimal models/hardware.
 - ❌ Cloudflare CDN (HF already has this)
 - ❌ TGI (HF already built this)
 
-## TenPak's Unique Value
+## Sparse's Unique Value
 
 **We don't replace quantization tools - we orchestrate them:**
 
@@ -102,16 +102,16 @@ Auto-route inference requests to optimal models/hardware.
 
 ```bash
 # Install
-pip install tenpak
+pip install sparse
 
 # Model delta compression
-tenpak delta compress meta-llama/Llama-2-7b my-org/llama-chat --output ./delta
+sparse delta compress meta-llama/Llama-2-7b my-org/llama-chat --output ./delta
 
 # Dataset delta compression
-tenpak delta-dataset compress squad squad_v2 --output ./dataset_delta
+sparse delta-dataset compress squad squad_v2 --output ./dataset_delta
 
 # Smart routing
-tenpak route meta-llama/Llama-2-70b "What is the capital of France?"
+sparse route meta-llama/Llama-2-70b "What is the capital of France?"
 ```
 
 ## Python API
@@ -149,10 +149,10 @@ print(f"Savings: {decision.reasoning}")
 
 ## Links
 
-- **GitHub:** [github.com/gagansuie/tenpak](https://github.com/gagansuie/tenpak)
-- **Documentation:** [README](https://github.com/gagansuie/tenpak#readme)
+- **GitHub:** [github.com/gagansuie/sparse](https://github.com/gagansuie/sparse)
+- **Documentation:** [README](https://github.com/gagansuie/sparse#readme)
 - **License:** MIT
 
 ---
 
-**Note:** This is an interactive demo. For actual model quantization, install TenPak and use the CLI or Python API.
+**Note:** This is an interactive demo. For actual model quantization, install Sparse and use the CLI or Python API.

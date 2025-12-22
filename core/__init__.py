@@ -1,5 +1,5 @@
 """
-TenPak Core Module
+Sparse Core Module
 
 Quantization orchestration, calibration, delta compression, and optimization.
 

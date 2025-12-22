@@ -1,5 +1,5 @@
 """
-TenPak Calibration - Collect statistics for compression
+Sparse Calibration - Collect statistics for compression
 
 Collects Fisher information, activation scales, and Hessian diagonal
 for importance-aware quantization (AWQ/GPTQ style).

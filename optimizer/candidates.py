@@ -1,5 +1,5 @@
 """
-TenPak Optimizer - Candidate Generation
+Sparse Optimizer - Candidate Generation
 
 Generates compression candidates for optimization.
 Uses industry-standard quantization tools (AutoGPTQ, AutoAWQ, bitsandbytes).
