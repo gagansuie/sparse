@@ -2,15 +2,19 @@
 
 ## Overview
 
-TenPak is an **LLM quantization orchestration platform** built entirely in Python:
+**TenPak solves two critical problems for model hosting platforms:**
 
-1. **Quantization Wrapper** (`core/quantization.py`) - Unified API for AutoGPTQ, AutoAWQ, bitsandbytes
-2. **Delta Compression** (`core/delta.py`) - Efficient storage for fine-tunes
-3. **Cost Optimizer** (`optimizer/`) - Auto-select best quantization method
-4. **HTTP Streaming** (`artifact/http_streaming.py`) - CDN-friendly remote artifacts
-5. **Inference Integration** (`inference/`) - vLLM/TGI deployment helpers
-6. **REST API** (`studio/`) - Compression-as-a-service
-7. **CLI** (`cli/`) - Command-line interface
+### Primary: Delta Compression
+Store fine-tuned models as 60-90% smaller deltas from base models.
+
+### Secondary: Cost Optimizer
+Auto-benchmark GPTQ/AWQ/bitsandbytes and select the cheapest method meeting constraints.
+
+## Core Components
+
+1. **Delta Compression** (`core/delta.py`) - Unique feature, 60-90% savings on fine-tunes
+2. **Cost Optimizer** (`optimizer/`) - Auto-select best quantization method
+3. **CLI** (`cli/`) - Delta compression + optimization commands
 
 ## Component Design
 
@@ -47,35 +51,46 @@ QUANTIZATION_PRESETS = {
 ```
 core/
 ├── __init__.py          # Public API exports
-├── quantization.py      # Wrapper for AutoGPTQ/AutoAWQ/bitsandbytes
-├── delta.py            # Delta compression for fine-tunes
-├── calibration.py      # Stats collection (Fisher, Hessian) - legacy
-└── allocation.py       # Bit allocation strategies - legacy
+├── delta.py            # Delta compression (PRIMARY FEATURE)
+├── calibration.py      # Stats collection for cost optimizer
+└── quantization.py     # Minimal wrapper for optimizer
 ```
 
 **Key APIs:**
 
-1. **Quantization Wrapper**
-```python
-wrapper = QuantizationWrapper(method="awq", bits=4)
-model = wrapper.quantize("model_id", calibration_data=dataset)
-```
-
-2. **Delta Compression**
+1. **Delta Compression** (Primary)
 ```python
 from core.delta import compress_delta, estimate_delta_savings
 
 # Estimate savings
-savings = estimate_delta_savings(base_model, finetuned_model)
-# 60-90% size reduction
+savings = estimate_delta_savings(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    finetuned_model_id="my-org/llama-chat"
+)
+print(f"Savings: {savings['savings_pct']:.1f}%")  # 60-90%
 
 # Compress as delta
-delta_artifact = compress_delta(base_model, finetuned_model)
+delta_manifest = compress_delta(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    finetuned_model_id="my-org/llama-chat",
+    output_dir="./delta"
+)
 ```
 
-### Optimizer (`optimizer/`)
+2. **Cost Optimizer** (Secondary)
+```python
+from optimizer import optimize_model, OptimizationConstraints
 
-**TenPak's unique value** - auto-select best quantization method:
+constraints = OptimizationConstraints(
+    max_ppl_delta=2.0,
+    min_compression=5.0
+)
+result = optimize_model("meta-llama/Llama-2-7b-hf", constraints)
+```
+
+### Cost Optimizer (`optimizer/`)
+
+**Secondary value proposition** - auto-select best quantization method:
 
 ```python
 from optimizer import optimize_model, OptimizationConstraints
@@ -101,58 +116,17 @@ print(f"Cost: ${result.winner.cost_per_1m_tokens}")
 - Select cheapest option meeting constraints
 - Supports hardware-specific optimization (T4, A10G, A100)
 
-### Inference Integration (`inference/`)
-
-```python
-from inference.vllm_integration import TenPakVLLMLoader
-
-# One-line vLLM deployment
-loader = TenPakVLLMLoader(
-    artifact_path="llama-7b.tnpk",
-    tensor_parallel_size=4
-)
-engine = loader.create_engine()
-```
-
-**Supported Engines:**
-- vLLM (tensor parallelism, paged attention)
-- TGI (Text Generation Inference)
-
-### Studio API (`studio/`)
-
-REST API for compression-as-a-service.
-
-```
-studio/
-├── api.py           # FastAPI endpoints
-├── jobs.py          # Async job runner
-└── storage.py       # Artifact storage
-```
-
-**Endpoints:**
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/compress` | POST | Quantize a model |
-| `/optimize` | POST | **Auto-select best method** |
-| `/delta/compress` | POST | **Compress fine-tune as delta** |
-| `/status/{id}` | GET | Poll job progress |
-| `/artifact/{id}` | GET | Download result |
 
 ### CLI (`cli/`)
 
 **Commands:**
 ```bash
-# Quantize with auto-optimization
-tenpak optimize <model_id> --max-ppl-delta 2.0
+# PRIMARY: Delta compression for fine-tunes
+tenpak delta compress meta-llama/Llama-2-7b my-org/llama-chat --output ./delta
+tenpak delta estimate meta-llama/Llama-2-7b my-org/llama-chat
 
-# Quantize with specific method
-tenpak quantize <model_id> --method gptq --bits 4
-
-# Delta compression for fine-tunes
-tenpak delta <finetuned_model> --base <base_model>
-
-# Serve with vLLM
-tenpak serve <artifact_path> --engine vllm
+# SECONDARY: Cost optimizer
+tenpak optimize meta-llama/Llama-2-7b --max-ppl-delta 2.0 --min-compression 5.0
 ```
 
 ## Data Flow
@@ -276,78 +250,32 @@ def reconstruct_from_delta(base_model, delta_artifact):
     return model
 ```
 
-### Artifact Format (`artifact/`)
 
-Chunked, signed, HTTP-streamable artifact format.
+## Quantization Methods (For Cost Optimizer)
 
-```
-artifact/
-├── format.py            # Artifact metadata and manifest
-├── streaming.py         # Local streaming load/verify
-├── signing.py           # HMAC + GPG signing
-└── http_streaming.py    # HTTP streaming for remote artifacts
-```
+The cost optimizer benchmarks these industry-standard methods:
 
-## Artifact Structure
+| Method | Compression | PPL Δ | Notes |
+|--------|-------------|-------|-------|
+| **GPTQ 4-bit** | 7-8x | <1% | Best quality (AutoGPTQ) |
+| **AWQ 4-bit** | 7-8x | <2% | Best speed/quality (AutoAWQ) |
+| **bitsandbytes NF4** | 6-7x | <1.5% | Fast, no calibration |
+| **bitsandbytes INT8** | 2x | <0.5% | Conservative |
 
-```
-<artifact_dir>/
-├── manifest.json      # Metadata + quantization info
-│   {
-│     "version": "1.0",
-│     "model_id": "meta-llama/Llama-2-7b-hf",
-│     "quantization": {
-│       "method": "awq",
-│       "bits": 4,
-│       "group_size": 128,
-│       "model_path": "./quantized_model"
-│     },
-│     "delta": {  # Optional - if this is a fine-tune
-│       "base_model_id": "meta-llama/Llama-2-7b-hf",
-│       "delta_method": "sparse_int8",
-│       "changed_layers": ["layers.10", "layers.11"]
-│     },
-│     "optimization": {  # Optional - if cost-optimized
-│       "selected_method": "awq_balanced",
-│       "cost_per_1m_tokens": 0.15,
-│       "latency_p50_ms": 45.2
-│     },
-│     "chunks": [...],
-│     "signature": {...}
-│   }
-├── quantized_model/   # Quantized model weights
-│   ├── config.json
-│   ├── model.safetensors
-│   └── quantization_config.json
-└── signature.sig      # Optional GPG signature
-```
-
-## Quantization Presets
-
-| Preset | Method | Bits | Group Size | Compression | PPL Δ | Calibration |
-|--------|--------|------|------------|-------------|-------|-------------|
-| `gptq_quality` | GPTQ | 4 | 128 | 7-8x | <1% | Required |
-| `awq_balanced` | AWQ | 4 | 128 | 7-8x | <2% | Required |
-| `bnb_nf4` | bitsandbytes | 4 | - | 6-7x | <1.5% | Optional |
-| `bnb_int8` | bitsandbytes | 8 | - | 2x | <0.5% | No |
-| `gptq_aggressive` | GPTQ | 3 | 128 | 10-12x | 3-5% | Required |
-| `awq_fast` | AWQ | 4 | 64 | 6-7x | <2% | Required |
+**Note:** TenPak doesn't implement these - it helps users choose between them.
 
 ## Key Design Decisions
 
-1. **Wrapper Architecture** - Don't compete with AutoGPTQ/AutoAWQ, orchestrate them
-2. **Delta Compression is Unique** - No one else offers this at scale (60-90% savings on fine-tunes)
-3. **Cost Optimizer is Unique** - Auto-benchmark all methods, pick cheapest meeting constraints
-4. **Pure Python** - No Rust/C++ dependencies, easier maintenance and deployment
-5. **Focus on Orchestration** - HTTP streaming, vLLM/TGI integration, artifact format
-6. **Tensor Parallelism** - Pass-through to wrapped tools and inference engines
+1. **Delta Compression is Primary Value** - Unique feature, no competitor offers this (60-90% savings)
+2. **Cost Optimizer is Secondary** - Helps users choose between GPTQ/AWQ/bitsandbytes
+3. **Don't Compete on Infrastructure** - HF has CDN, TGI, etc. Focus on what they don't have
+4. **Pure Python** - No Rust/C++ dependencies, easier integration
+5. **Honest Positioning** - We're a model hub optimization tool, not a quantization library
 
 ## Performance Notes
 
-- **Quantization**: Delegated to AutoGPTQ/AutoAWQ (highly optimized CUDA kernels)
 - **Delta Compression**: CPU/PyTorch tensor ops, I/O bound (disk reading is bottleneck)
-- **HTTP Streaming**: Network I/O bound, Python overhead negligible
-- **Cost Optimizer**: Orchestration is <0.1s in 5-minute quantization workflow
+- **Cost Optimizer**: Benchmarking takes minutes (quantizes models), selection is instant
 
 ## Architecture Evolution
 
@@ -357,10 +285,10 @@ artifact/
 - Goal: 10x compression with <1% PPL
 - **Result**: Achieved 4x without calibration, fragile for >6x
 
-### v0.2.0 (Dec 2024) - Wrapper Architecture
-- **Pivoted** to wrap AutoGPTQ/AutoAWQ/bitsandbytes
+### v0.2.0 (Dec 2024) - Strategic Refocus
+- **Pivoted** to focus on delta compression + cost optimizer
 - Removed all Rust code
-- Added delta compression (unique)
-- Added cost optimizer (unique)
-- Added HTTP streaming and vLLM/TGI integration
-- **Result**: Production-ready orchestration platform
+- Removed commodity features (HTTP streaming, inference integration, REST API)
+- **Primary**: Delta compression (unique, $20-25M/year value for model hubs)
+- **Secondary**: Cost optimizer (reduces user confusion)
+- **Result**: Focused product with clear value proposition

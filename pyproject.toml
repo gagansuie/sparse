@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tenpak"
 version = "0.2.0"
-description = "LLM quantization orchestration - wraps AutoGPTQ, AutoAWQ, bitsandbytes with delta compression and streaming"
+description = "Delta compression for LLM fine-tunes + cross-tool cost optimizer for model hubs"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
 authors = [
     {name = "TenPak Team"}
 ]
-keywords = ["llm", "compression", "quantization", "machine-learning", "transformers"]
+keywords = ["llm", "delta-compression", "model-optimization", "fine-tuning", "model-hub"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -33,18 +33,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-api = [
-    "fastapi>=0.100.0",
-    "uvicorn>=0.23.0",
-    "pydantic>=2.0.0",
-]
 dev = [
     "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
     "black>=23.0.0",
     "ruff>=0.0.280",
 ]
-all = ["tenpak[api,dev]"]
+all = ["tenpak[dev]"]
 
 [project.scripts]
 tenpak = "cli.main:main"
@@ -56,7 +50,7 @@ Repository = "https://github.com/gagansuie/tenpak"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core", "core.*", "studio", "studio.*", "cli", "cli.*", "optimizer", "optimizer.*", "artifact", "artifact.*", "deploy", "deploy.*", "inference", "inference.*"]
+include = ["core", "core.*", "cli", "cli.*", "optimizer", "optimizer.*"]
 
 [tool.black]
 line-length = 100

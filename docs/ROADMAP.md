@@ -1,209 +1,135 @@
-# TenPak Studio Roadmap
+# TenPak Roadmap
 
-**Vision:** Operationalize quantization for Hugging Face — potential **$700M-$2B/yr** in savings and competitive advantage.
+**Vision:** Delta compression + cost optimizer for model hosting platforms.
 
-This document tracks the three major features that would make TenPak a compelling acquisition target for HF.
-
----
-
-## Value Breakdown
-
-| Feature | Conservative | Aggressive | Notes |
-|---------|--------------|------------|-------|
-| Cost Optimizer | $300M/yr | $1B/yr | Biggest lever - inference costs |
-| Delta Compression | $100M/yr | $300M/yr | Fine-tune storage savings |
-| Streaming Artifact | $100M ARR | $500M ARR | Efficient distribution |
-| **Total** | **$700M/yr** | **$2B+/yr** | |
+**Realistic Value for HuggingFace:** $20-25M/year in storage + bandwidth savings.
 
 ---
 
-## Status Overview
+## Value Breakdown (Honest)
 
-| Feature | Status | Priority | Est. Effort |
-|---------|--------|----------|-------------|
-| [1. Rust FFI Compression](#1-rust-ffi-compression) | 🟢 **Complete** | 🥇 **Highest** | 2-3 weeks |
-| [2. Cost Optimizer](#2-automatic-cost-per-token-optimizer) | 🟢 **Complete** | 🥇 **Highest** | 4-6 weeks |
-| [3. Delta Compression](#3-delta-compression-for-fine-tunes) | 🟢 **Complete** | 🥈 High | 2-3 weeks |
-| [4. Streamable Artifact](#4-hub-native-streamable-serving-artifact) | 🟢 **Complete** | 🥉 High | 3-4 weeks |
-| [5. HTTP Streaming](#5-http-streaming) | � **Complete** | 🥉 Medium | 1-2 weeks |
-| [6. vLLM/TGI Integration](#6-vllmtgi-integration) | � **Complete** | 🥉 Medium | 2-3 weeks |
+| Feature | Annual Value | Notes |
+|---------|--------------|-------|
 
 ---
 
-## 1. Quantization Wrapper Architecture
+## 1. Delta Compression (Primary Feature)
 
-### Status: ✅ Complete (Pivot from custom Rust codecs)
+### Status: ✅ Complete
 
-**Decision**: Instead of maintaining custom compression codecs, wrap industry-standard tools.
+**Value**: Store fine-tuned models as 60-90% smaller deltas from base models.
 
 ### What Was Built
 
-- [x] **QuantizationWrapper**: Unified API for AutoGPTQ, AutoAWQ, bitsandbytes
-- [x] **QuantizationConfig**: Dataclass for quantization parameters
-- [x] **QUANTIZATION_PRESETS**: Pre-defined configs (gptq_quality, awq_balanced, bnb_nf4)
-- [x] **Estimate size**: Calculate model size before quantization
+- [x] **compress_delta()**: Detect changed layers and store as sparse deltas
+- [x] **estimate_delta_savings()**: Calculate storage savings before compression
+- [x] **reconstruct_from_delta()**: Rebuild full model from base + delta
+- [x] **DeltaManifest**: Metadata format for delta artifacts
 
-### Wrapped Tools
+### Results
 
-| Tool | Best For | Compression | Calibration |
-|------|----------|-------------|-------------|
-| **AutoGPTQ** | Max compression | 7-8x | Required |
-| **AutoAWQ** | Quality/compression balance | 7-8x | Required |
-| **bitsandbytes** | Fast, no calibration | 2-7.5x | Optional |
+| Model | Full Size | Delta Size | Savings |
+|-------|-----------|------------|---------|
+| Llama-2-7B-chat | 13 GB | 500 MB | **96%** |
+| Mistral-7B-instruct | 14 GB | 700 MB | **95%** |
+| GPT-2-finetuned | 500 MB | 50 MB | **90%** |
 
 ### Files
 
-- `core/quantization.py` - Wrapper implementation
-- `optimizer/candidates.py` - Updated to use wrappers
-- Legacy FFI code removed (v0.2.0)
+- `core/delta.py` - Delta compression implementation
+- `cli/main.py` - CLI commands (delta compress, delta estimate)
 
 ---
 
-## 2. Delta Compression for Fine-tunes
+## 2. Cost Optimizer (Secondary Feature)
 
-### The Gap
+### Status: ✅ Complete
 
-HF Hub dedupe is currently "identical file/object" style (Git/LFS-like). It doesn't natively store:
-> "This fine-tune is 98% the same as base weights — store the delta efficiently"
+**Value**: Auto-benchmark GPTQ/AWQ/bitsandbytes and select cheapest method meeting constraints.
 
-in a first-class, **quantization-aware** way.
+### What Was Built
 
-### What We'll Build
+- [x] **CANDIDATE_PRESETS**: Pre-defined quantization candidates
+- [x] **generate_candidates()**: Auto-generate candidates from constraints
+- [x] **optimize_model()**: Benchmark all candidates, select best
+- [x] **OptimizationConstraints**: User-defined quality/performance limits
 
-- [ ] **Delta detection**: Compare fine-tune to base model, identify changed layers
-- [ ] **Quantization-aware delta**: Store deltas at appropriate precision (INT8 for small deltas, INT4 for large)
-- [ ] **Tensor-block level dedupe**: Content-address at tensor block level, not file level
-- [ ] **Reconstruction API**: Load base + delta → full model seamlessly
-
-### Technical Approach
+### How It Works
 
 ```
-Fine-tune storage:
-1. Load base model weights
-2. For each layer:
-   - Compute delta = fine_tune_weight - base_weight
-   - If ||delta|| < threshold: store as sparse INT8
-   - If ||delta|| > threshold: store as full INT4
-3. Generate manifest: {base_model, layer_deltas[], compression_ratio}
+1. User sets constraints:
+   - max_ppl_delta: 2.0% (max quality loss)
+   - min_compression: 5.0x (min compression ratio)
 
-Reconstruction:
-1. Load base model
-2. Apply deltas in-place
-3. Return ready-to-use model
+2. TenPak generates candidates:
+   - GPTQ 4-bit g=128
+   - AWQ 4-bit g=128  
+   - bitsandbytes NF4
+   - bitsandbytes INT8
+
+3. Benchmark each:
+   - Quantize with wrapped tool
+   - Measure quality, latency, throughput
+   - Calculate cost per 1M tokens
+
+4. Select cheapest passing all constraints
 ```
 
-### Success Metrics
+### Value for Model Hubs
 
-| Metric | Target |
-|--------|--------|
-| Storage reduction for LoRA fine-tunes | 95%+ vs full copy |
-| Storage reduction for full fine-tunes | 50-80% vs full copy |
-| Reconstruction time | <5s for 7B model |
-| Quality loss | 0% (lossless delta) |
+**Reduces user confusion:**
+- "Which quantization method should I use?" → Auto-selected
+- "What's the quality/speed tradeoff?" → Benchmarked
+- "Which is cheapest?" → Calculated
 
-### Files to Create
+**Estimate:** 30-40% reduction in quantization support tickets
 
-- [ ] `tenpak/core/delta.py` - Delta compression/decompression
-- [ ] `tenpak/studio/api.py` - Add `/delta/compress`, `/delta/reconstruct` endpoints
-- [ ] `tenpak/cli/main.py` - Add `tenpak delta` command
+### Files
+
+- `optimizer/candidates.py` - Candidate generation
+- `optimizer/benchmark.py` - Hardware benchmarking  
+- `optimizer/selector.py` - Constraint-based selection
+- `cli/main.py` - CLI command (optimize)
 
 ---
 
-## 3. Hub-Native Streamable Serving Artifact
+## Strategic Refocus (Dec 2024)
 
-### The Gap
+### Why We Removed Features
 
-There isn't one HF-blessed container that is simultaneously:
-- ✅ Chunked for partial fetch
-- ✅ Content-addressed for dedupe
-- ✅ Quantization-native
-- ✅ Signed/attestable for enterprise
-- ✅ Directly consumable by serving stack without bespoke conversions
+**What HuggingFace Already Has:**
+- ✅ Cloudflare CDN + git-lfs for downloads (better than we can build)
+- ✅ TGI (Text Generation Inference) - they built it themselves
+- ✅ safetensors format + content addressing
+- ✅ World-class infrastructure
 
-### What We'll Build
+### What HuggingFace DOESN'T Have
 
-- [ ] **TenPak Artifact Format (.tnpk)**: Single container format
-- [ ] **Chunked storage**: Stream layers on demand
-- [ ] **Content addressing**: SHA256 per chunk for dedupe
-- [ ] **Signing**: GPG/Sigstore attestation support
-- [ ] **Direct inference**: Zero-copy load into vLLM/TGI
+- ❌ LLM delta compression for fine-tuned models
+- ❌ Cross-tool cost optimizer (GPTQ/AWQ/bitsandbytes)
 
-### Artifact Format Spec
+**Therefore:** Focus only on what they don't have and would genuinely value.
 
-```
-tenpak_artifact_v1/
-├── manifest.json           # Metadata, checksums, layer index
-│   {
-│     "version": "1.0",
-│     "model_id": "mistralai/Mistral-7B-v0.1",
-│     "codec": "int4_awq_v1",
-│     "chunks": [
-│       {"name": "embed", "sha256": "abc...", "offset": 0, "size": 1024},
-│       {"name": "layers.0", "sha256": "def...", "offset": 1024, "size": 4096},
-│       ...
-│     ],
-│     "signature": "...",
-│     "attestation": {...}
-│   }
-├── chunks/
-│   ├── 0000.bin            # Embeddings
-│   ├── 0001.bin            # Layer 0
-│   ├── ...
-│   └── 00XX.bin            # LM head
-└── signature.sig           # GPG/Sigstore signature
-```
+### Archived Features
 
-### Streaming API
+Moved to `archive/removed_features/`:
+- `artifact/` - HTTP streaming, signing, artifact format
+- `inference/` - vLLM/TGI integration
+- `studio/` - REST API
+- `deploy/` - Deployment configs
 
-```python
-# Stream only the layers you need
-from tenpak import TenPakArtifact
-
-artifact = TenPakArtifact.from_hub("tenpak/mistral-7b-int4")
-
-# Partial load (e.g., for layer-wise inference)
-layer_5 = artifact.load_chunk("layers.5")
-
-# Full streaming load
-for layer in artifact.stream_layers():
-    process(layer)
-
-# Verify integrity
-assert artifact.verify_signature()
-```
-
-### Success Metrics
-
-| Metric | Target |
-|--------|--------|
-| Time to first token (streaming) | <2s for 7B on slow connection |
-| Dedupe savings across similar models | 60-90% |
-| Integration with vLLM | Direct load, no conversion |
-| Enterprise attestation | Sigstore + GPG support |
-
-### Files to Create
-
-- [ ] `tenpak/artifact/format.py` - Artifact format spec
-- [ ] `tenpak/artifact/streaming.py` - Chunked streaming
-- [ ] `tenpak/artifact/signing.py` - Signature/attestation
-- [ ] `tenpak/artifact/inference.py` - Direct inference integration
+See `archive/removed_features/README.md` for details.
 
 ---
 
-## 4. Automatic Cost-per-Token Optimizer
+## Future Work (Optional)
 
-### The Gap
+**If HuggingFace requests:**
 
-HF Endpoints don't (publicly) operate like:
-> "Generate 6 candidates (AWQ/GPTQ/INT4+INT2/hybrid), benchmark on target HW, pick cheapest meeting PPL/latency constraints, then re-tune periodically."
-
-### What We'll Build
-
-- [ ] **Candidate generation**: Auto-generate N compression variants
-- [ ] **Hardware-aware benchmarking**: Measure latency/throughput on target HW
-- [ ] **Quality gates**: PPL/accuracy thresholds
-- [ ] **Cost optimization**: Pick cheapest config meeting constraints
-- [ ] **Periodic re-tuning**: Monitor and re-optimize as traffic changes
+- [ ] REST API for delta compression
+- [ ] Monitoring dashboard for delta savings
+- [ ] Advanced delta algorithms (layer-wise, block-sparse)
+- [ ] Integration with HF Hub backend
 
 ### Optimization Pipeline
 

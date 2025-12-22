@@ -1,0 +1,54 @@
+name: Deploy to HF Space
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'hf_space/**'
+      - 'core/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Hugging Face Space
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Prepare HF Space directory
+        run: |
+          # Create temp directory for the space
+          mkdir -p /tmp/hf-space
+          
+          # Copy hf_space app files
+          cp hf_space/app.py /tmp/hf-space/
+          cp hf_space/README.md /tmp/hf-space/
+          cp hf_space/requirements.txt /tmp/hf-space/
+          
+          # Copy TenPak core modules (needed for imports)
+          cp -r core /tmp/hf-space/
+          cp -r optimizer /tmp/hf-space/
+          
+          # Append TenPak dependencies to requirements
+          printf "\n# TenPak dependencies\n" >> /tmp/hf-space/requirements.txt
+          echo "torch>=2.0.0" >> /tmp/hf-space/requirements.txt
+          echo "transformers>=4.30.0" >> /tmp/hf-space/requirements.txt
+      
+      - name: Push to HuggingFace Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+        run: |
+          cd /tmp/hf-space
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git init
+          git checkout -b main
+          git add .
+          git commit -m "Deploy TenPak demo from GitHub Actions"
+          
+          git push --force https://user:$HF_TOKEN@huggingface.co/spaces/$HF_SPACE_ID main
