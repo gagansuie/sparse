@@ -156,3 +156,16 @@ print(f"Savings: {decision.reasoning}")
 ---
 
 **Note:** This is an interactive demo. For actual model quantization, install Sparse and use the CLI or Python API.
+
+---
+
+## ⚠️ Demo Only - Proprietary Software
+
+This is a **demonstration** using mock data to showcase Sparse's capabilities.
+
+The actual Sparse library is **proprietary software** and not publicly available.
+
+**For licensing inquiries:**
+- **Sparse Labs**
+- **Email:** gagan.suie@sparselabs.ai
+- **Website:** https://sparselabs.ai
