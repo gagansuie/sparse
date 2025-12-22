@@ -1,5 +1,5 @@
 """
-TenPak Optimizer - Automatic Cost-per-Token Optimization
+Sparse Optimizer - Automatic Cost-per-Token Optimization
 
 Auto-benchmark compression candidates and select the cheapest one
 meeting quality/latency constraints.

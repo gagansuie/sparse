@@ -1,5 +1,5 @@
 """
-TenPak Optimizer - Hardware Benchmarking
+Sparse Optimizer - Hardware Benchmarking
 
 Measures latency, throughput, and memory usage for compression candidates.
 """

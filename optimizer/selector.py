@@ -1,5 +1,5 @@
 """
-TenPak Optimizer - Constraint-Based Selection
+Sparse Optimizer - Constraint-Based Selection
 
 Selects the optimal compression candidate based on constraints.
 """

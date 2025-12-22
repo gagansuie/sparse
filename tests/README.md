@@ -1,6 +1,6 @@
-# TenPak Tests
+# Sparse Tests
 
-Test suite for TenPak's core features:
+Test suite for Sparse's core features:
 - Model Delta Compression
 - Dataset Delta Compression (NEW)
 - Smart Routing (NEW)

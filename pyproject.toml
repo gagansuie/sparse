@@ -3,21 +3,20 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tenpak"
+name = "sparse"
 version = "0.2.0"
-description = "Delta compression for LLM fine-tunes + cross-tool cost optimizer for model hubs"
+description = "Delta compression for LLM fine-tunes + smart routing system for model hubs - $30-45M/year savings"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Proprietary"}
 requires-python = ">=3.9"
 authors = [
-    {name = "TenPak Team"}
+    {name = "Sparse Labs", email = "gagan.suie@sparselabs.ai"}
 ]
-keywords = ["llm", "delta-compression", "model-optimization", "fine-tuning", "model-hub"]
+keywords = ["llm", "delta-compression", "model-optimization", "fine-tuning", "model-hub", "smart-routing", "dataset-delta"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -38,15 +37,15 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.0.280",
 ]
-all = ["tenpak[dev]"]
+all = ["sparse[dev]"]
 
 [project.scripts]
-tenpak = "cli.main:main"
+sparse = "cli.main:main"
 
 [project.urls]
-Homepage = "https://github.com/gagansuie/tenpak"
-Documentation = "https://github.com/gagansuie/tenpak#readme"
-Repository = "https://github.com/gagansuie/tenpak"
+Homepage = "https://sparselabs.ai"
+Documentation = "https://github.com/gagansuie/sparse#readme"
+Repository = "https://github.com/gagansuie/sparse"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -1,41 +1,166 @@
-Tenpak Proprietary License
-Version 1.0 – November 18, 2025
 
-Copyright (c) 2025 Tenpak contributors. All rights reserved.
 
-1. Grant of License. Subject to the terms of this License, Tenpak grants you a
-   limited, non-transferable, non-sublicensable, revocable license to install
-   and use the Tenpak software solely for your organization’s internal
-   evaluation and development purposes.
+Version 0.2.0 – December 22, 2025
 
-2. Restrictions. You may not copy (except for reasonable backup purposes),
-   modify, distribute, sell, sublicense, rent, lease, or otherwise transfer the
-   Tenpak software or any derivative works to any third party. You may not
-   reverse engineer, decompile, or disassemble the software except to the
-   extent expressly permitted by applicable law.
+Copyright (c) 2025 Sparse Development Team. All rights reserved.
 
-3. Ownership. Tenpak and its contributors retain all right, title, and interest
-   in and to the software and all associated intellectual property rights. No
-   rights are granted to you other than those expressly stated in this License.
+================================================================================
 
-4. Feedback. If you provide ideas, suggestions, or feedback about the software,
-   you grant Tenpak a perpetual, irrevocable, royalty-free license to use,
-   modify, and incorporate the feedback without restriction.
+================================================================================
 
-5. Termination. This License terminates automatically if you breach any term.
-   Upon termination, you must cease all use of the software and destroy all
-   copies in your possession.
 
-6. Disclaimer of Warranty. THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF
-   ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF
-   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
 
-7. Limitation of Liability. TO THE MAXIMUM EXTENT PERMITTED BY LAW, TENPAK AND
-   ITS CONTRIBUTORS WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL,
-   CONSEQUENTIAL, OR EXEMPLARY DAMAGES ARISING OUT OF OR IN CONNECTION WITH THE
-   SOFTWARE OR THIS LICENSE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
-   DAMAGES.
+--------------------------------------------------------------------------------
+1. DEFINITIONS
+--------------------------------------------------------------------------------
 
-8. Governing Law. This License is governed by the laws of the jurisdiction in
-   which the licensor is organized, without regard to conflict-of-law
-   principles.
+"Software" means the Sparse software library, including all source code,
+compiled binaries, documentation, and associated materials.
+
+"Licensee" refers to the entity or individual that has entered into a separate
+commercial license agreement with Licensor.
+
+"Licensor" refers to the Sparse Development Team and copyright holders.
+
+--------------------------------------------------------------------------------
+2. GRANT OF LICENSE
+--------------------------------------------------------------------------------
+
+Subject to payment of applicable license fees and execution of a separate
+commercial license agreement:
+
+Licensor grants Licensee a limited, non-exclusive, non-transferable,
+non-sublicensable license to:
+
+   a) Install and use the Software in Licensee's production infrastructure
+   b) Modify the Software for internal use only
+   c) Create derivative works for internal use only
+   d) Use the Software to provide services to Licensee's end users
+
+--------------------------------------------------------------------------------
+3. RESTRICTIONS
+--------------------------------------------------------------------------------
+
+Licensee shall NOT:
+
+   a) Distribute, sell, lease, rent, or sublicense the Software
+   b) Publicly release or open-source the Software or derivatives
+   c) Share the Software with third parties without written consent
+   d) Remove or modify copyright notices or license information
+   e) Use the Software to provide Software-as-a-Service to third parties
+      (unless explicitly permitted in commercial agreement)
+   f) Reverse engineer the Software (except as permitted by law)
+   g) Use the Software in products that compete with Licensor's offerings
+
+--------------------------------------------------------------------------------
+4. INTELLECTUAL PROPERTY RIGHTS
+--------------------------------------------------------------------------------
+
+Licensor retains all right, title, and interest in and to the Software,
+including all intellectual property rights. This license grants no ownership
+rights.
+
+All improvements, modifications, and derivative works created by Licensee
+remain the property of Licensor unless otherwise specified in a separate
+commercial agreement.
+
+--------------------------------------------------------------------------------
+5. CONFIDENTIALITY
+--------------------------------------------------------------------------------
+
+The Software and all related materials are CONFIDENTIAL and proprietary.
+
+Licensee agrees to:
+   a) Protect the Software with the same care used for its own confidential
+      information (but no less than reasonable care)
+   b) Restrict access to authorized employees only
+   c) Not disclose the Software's existence, features, or performance to
+      third parties without written consent
+
+--------------------------------------------------------------------------------
+6. SUPPORT AND MAINTENANCE
+--------------------------------------------------------------------------------
+
+Support and maintenance are provided only under a separate commercial agreement.
+
+Without such an agreement, the Software is provided "AS IS" with no support.
+
+--------------------------------------------------------------------------------
+7. WARRANTY DISCLAIMER
+--------------------------------------------------------------------------------
+
+THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
+
+LICENSOR DOES NOT WARRANT THAT THE SOFTWARE WILL BE ERROR-FREE, UNINTERRUPTED,
+OR MEET LICENSEE'S REQUIREMENTS.
+
+--------------------------------------------------------------------------------
+8. LIMITATION OF LIABILITY
+--------------------------------------------------------------------------------
+
+IN NO EVENT SHALL LICENSOR BE LIABLE FOR:
+
+   a) Any indirect, incidental, special, consequential, or exemplary damages
+   b) Loss of profits, revenue, data, or business opportunities
+   c) Damages exceeding the fees paid by Licensee in the 12 months prior
+      to the claim
+
+This limitation applies even if Licensor has been advised of the possibility
+of such damages.
+
+--------------------------------------------------------------------------------
+9. TERMINATION
+--------------------------------------------------------------------------------
+
+This license terminates automatically upon:
+   a) Breach of any term by Licensee
+   b) Expiration of the commercial license agreement
+   c) Non-payment of license fees
+   d) Written notice by either party (as specified in commercial agreement)
+
+Upon termination, Licensee must:
+   a) Immediately cease all use of the Software
+   b) Destroy all copies in its possession
+   c) Certify destruction in writing to Licensor
+
+--------------------------------------------------------------------------------
+10. EXPORT COMPLIANCE
+--------------------------------------------------------------------------------
+
+Licensee agrees to comply with all applicable export laws and regulations.
+
+The Software may not be exported or re-exported to prohibited countries or
+entities.
+
+--------------------------------------------------------------------------------
+11. GOVERNING LAW AND JURISDICTION
+--------------------------------------------------------------------------------
+
+This License is governed by the laws of [YOUR JURISDICTION], without regard
+to conflict-of-law principles.
+
+Any disputes shall be resolved in the courts of [YOUR JURISDICTION].
+
+--------------------------------------------------------------------------------
+12. ENTIRE AGREEMENT
+--------------------------------------------------------------------------------
+
+This License, together with any executed commercial license agreement,
+constitutes the entire agreement between the parties regarding the Software.
+
+--------------------------------------------------------------------------------
+13. CONTACT
+--------------------------------------------------------------------------------
+
+For licensing inquiries:
+Sparse Labs
+gagan.suie@sparselabs.ai
+
+================================================================================
+
+NOTE: This license requires a separate commercial agreement to be valid.
+Unauthorized use is strictly prohibited and may result in legal action.
+
+================================================================================

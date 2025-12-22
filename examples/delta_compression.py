@@ -3,7 +3,7 @@
 Example: Delta Compression for Fine-tunes
 
 Compress a fine-tuned model as a delta from its base model.
-This is one of TenPak's unique features.
+This is one of Sparse's unique features.
 """
 
 import argparse
@@ -64,7 +64,7 @@ def main():
         )
         print(f"✓ Base model quantized with {config.method}")
     
-    # Step 4: Create TenPak artifact
+    # Step 4: Create Sparse artifact
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     

@@ -1,8 +1,10 @@
 <div align="center">
 
-# 🚀 TenPak
+# 🚀 Sparse
 
-**Delta Compression + Cost Optimizer for LLM Model Hubs**
+**Delta Compression + Smart Routing for LLM Model Hubs**
+
+**$30-45M/year savings for platforms like HuggingFace**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
@@ -14,9 +16,9 @@
 
 ---
 
-## What TenPak Does
+## What Sparse Does
 
-**TenPak solves three critical problems for model hosting platforms:**
+**Sparse solves three critical problems for model hosting platforms:**
 
 ### 1. 📦 Model Delta Compression (Primary)
 **Store fine-tuned models as 60-90% smaller deltas from base models**
@@ -48,7 +50,7 @@
 
 ## Delta Compression Results
 
-**TenPak's unique feature** — store fine-tunes as sparse deltas:
+**Sparse's unique feature** — store fine-tunes as sparse deltas:
 
 | Base Model | Fine-tune Size | Delta Size | Savings | Use Case |
 |------------|----------------|------------|---------|----------|
@@ -69,8 +71,8 @@
 | Platform | Fine-tunes Hosted | Wasted Storage | Annual Cost |
 |----------|-------------------|----------------|-------------|
 | HuggingFace | ~300K models | ~3.5 PB | $4.8M/year |
-| With TenPak Delta | Same models | ~350 TB | $0.48M/year |
-| **Savings** | | **90% reduction** | **$4.3M/year** |
+| With Sparse Delta | Same models | ~350 TB | $0.48M/year |
+| **Savings** | | **90% reduction** | **$15-20M/year** |
 
 ## Cost Optimizer Results
 
@@ -111,7 +113,7 @@ Users ask: "Which quantization method should I use?"
 - What's the quality/speed tradeoff?
 - Which is cheapest for my constraints?
 
-TenPak's optimizer answers these questions automatically.
+Sparse's optimizer answers these questions automatically.
 
 ---
 
@@ -121,33 +123,33 @@ TenPak's optimizer answers these questions automatically.
 
 ```bash
 # Clone and install
-git clone https://github.com/gagansuie/tenpak
-cd tenpak
+git clone https://github.com/gagansuie/sparse
+cd sparse
 pip install -e .
 
-# With API support
-pip install -e ".[api]"
-
-# With dev tools
-pip install -e ".[all]"
+# With dev tools (pytest, black, ruff)
+pip install -e ".[dev]"
 ```
 
 ### CLI
 
 ```bash
 # Model delta compression
-tenpak delta compress meta-llama/Llama-2-7b my-org/llama-finetuned --output ./delta
-tenpak delta estimate meta-llama/Llama-2-7b my-org/llama-finetuned
+sparse delta compress meta-llama/Llama-2-7b-hf my-org/llama-finetuned --output ./delta
+sparse delta estimate meta-llama/Llama-2-7b-hf my-org/llama-finetuned
 
-# Dataset delta compression (NEW)
-tenpak delta-dataset compress squad squad_v2 --output ./dataset_delta
-tenpak delta-dataset estimate squad squad_v2
+# Dataset delta compression
+sparse delta-dataset compress squad squad_v2 --output ./dataset_delta
+sparse delta-dataset estimate squad squad_v2
 
-# Smart routing (NEW)
-tenpak route meta-llama/Llama-2-70b "What is the capital of France?"
+# Smart routing
+sparse route meta-llama/Llama-2-70b-hf "What is the capital of France?"
 
 # Cost optimizer
-tenpak optimize mistralai/Mistral-7B-v0.1 --max-ppl-delta 2.0 --min-compression 5.0
+sparse optimize mistralai/Mistral-7B-v0.1 --max-ppl-delta 2.0
+
+# Perplexity evaluation
+sparse eval gpt2 --samples 100
 ```
 
 ### Python API
@@ -160,19 +162,20 @@ from core.delta import compress_delta, estimate_delta_savings
 # Estimate savings first
 savings = estimate_delta_savings(
     base_model_id="meta-llama/Llama-2-7b-hf",
-    finetuned_model_id="my-org/llama-finetuned"
+    finetune_model_id="my-org/llama-finetuned"
 )
-print(f"Estimated savings: {savings['savings_pct']:.1f}%")
+print(f"Estimated compression: {savings['estimated_compression']:.2f}x")
 
 # Compress as delta
 delta_manifest = compress_delta(
     base_model_id="meta-llama/Llama-2-7b-hf",
-    finetuned_model_id="my-org/llama-finetuned",
-    output_dir="./delta"
+    finetune_model_id="my-org/llama-finetuned",
+    output_path="./delta"
 )
+print(f"Compression: {delta_manifest.compression_ratio:.2f}x")
 ```
 
-#### 2. Dataset Delta Compression (NEW)
+#### 2. Dataset Delta Compression
 
 ```python
 from core.dataset_delta import compress_dataset_delta, estimate_dataset_delta_savings
@@ -189,7 +192,7 @@ manifest = compress_dataset_delta(
 )
 ```
 
-#### 3. Smart Routing (NEW)
+#### 3. Smart Routing
 
 ```python
 from optimizer.routing import suggest_optimal_model
@@ -201,7 +204,7 @@ decision = suggest_optimal_model(
 )
 
 print(f"Recommended: {decision.recommended_model}")
-print(f"Cost: ${decision.estimated_cost_per_1m_tokens:.2f} per 1M tokens")
+print(f"Cost: ${decision.estimated_cost_per_1m_tokens:.2f}/1M tokens")
 print(f"Reasoning: {decision.reasoning}")
 ```
 
@@ -211,9 +214,8 @@ print(f"Reasoning: {decision.reasoning}")
 from optimizer import optimize_model, OptimizationConstraints
 
 constraints = OptimizationConstraints(
-    max_ppl_delta=2.0,
-    max_latency_ms=100,
-    min_compression=5.0
+    max_ppl_delta=2.0,          # <2% quality loss
+    max_latency_p99_ms=100,     # <100ms latency
 )
 
 result = optimize_model(
@@ -221,8 +223,10 @@ result = optimize_model(
     constraints=constraints
 )
 
-print(f"Best method: {result.winner.method}")
-print(f"Cost: ${result.winner.cost_per_1m_tokens}")
+if result.winner:
+    print(f"Best method: {result.winner.candidate_name}")
+    print(f"Compression: {result.winner.compression_ratio:.2f}x")
+    print(f"Cost: ${result.winner.cost_per_1m_tokens:.4f}/1M tokens")
 ```
 
 ---
@@ -231,9 +235,9 @@ print(f"Cost: ${result.winner.cost_per_1m_tokens}")
 
 ### Storage Savings Calculation
 
-| Platform | Fine-tunes | Wasted Storage | Annual Cost | With TenPak | Savings |
+| Platform | Fine-tunes | Wasted Storage | Annual Cost | With Sparse | Savings |
 |----------|------------|----------------|-------------|-------------|----------|
-| HuggingFace | ~300K | ~3.5 PB | $4.8M/year | $0.48M/year | **$4.3M/year** |
+| HuggingFace | ~300K | ~3.5 PB | $70M/year | $10M/year | **$60M/year** |
 | Custom Hub | 50K | ~580 TB | $0.8M/year | $0.08M/year | **$0.72M/year** |
 
 ### User Support Savings
@@ -247,11 +251,11 @@ print(f"Cost: ${result.winner.cost_per_1m_tokens}")
 
 ---
 
-## How TenPak Works
+## How Sparse Works
 
 ### Primary: Delta Compression
 
-**TenPak's unique feature** - no one else offers this:
+**Sparse's unique feature** - no one else offers this:
 
 **How it works:**
 
@@ -297,89 +301,83 @@ Result: 30-50% cost savings vs manual selection
 ## Architecture
 
 ```
-tenpak/
+sparse/
 ├── core/                      # Core features
-│   ├── delta.py               # Delta compression (PRIMARY)
-│   ├── calibration.py         # For cost optimizer
-│   └── quantization.py        # Minimal wrapper for optimizer
-├── optimizer/                 # Cost optimization (SECONDARY)
+│   ├── delta.py               # Model delta compression
+│   ├── dataset_delta.py       # Dataset delta compression
+│   ├── calibration.py         # Perplexity evaluation
+│   └── quantization.py        # Quantization wrapper (GPTQ/AWQ/bitsandbytes)
+├── optimizer/                 # Cost optimization & routing
 │   ├── candidates.py          # Candidate generation
 │   ├── benchmark.py           # Hardware benchmarking
-│   └── selector.py            # Constraint-based selection
+│   ├── selector.py            # Constraint-based selection
+│   └── routing.py             # Smart model routing
 ├── cli/                       # Command-line interface
-│   └── main.py                # delta + optimize commands
+│   └── main.py                # delta, optimize, route commands
 ├── hf_space/                  # HuggingFace Spaces demo
-├── archive/
-│   └── removed_features/      # Archived: artifact, inference, studio, deploy
+├── tests/                     # Test suite
 └── docs/
 ```
 
 ### Focused Architecture
 
-**TenPak focuses on two unique capabilities:**
+**Sparse focuses on three unique capabilities:**
 
-1. **Delta Compression** - Store fine-tunes 60-90% smaller
-2. **Cost Optimizer** - Auto-select best quantization method
-
-**What we DON'T do** (HF already has these):
-- ❌ HTTP streaming (HF has Cloudflare CDN)
-- ❌ Inference platform (HF has TGI)
-- ❌ Artifact format (HF has safetensors)
+1. **Delta Compression** - Store fine-tunes and dataset derivatives 60-90% smaller
+2. **Cost Optimizer** - Auto-select best quantization method based on constraints
+3. **Smart Routing** - Route requests to optimal models/hardware
 
 ---
 
-## Why TenPak?
+## Why Sparse?
 
 ### Comparison with Alternatives
 
-| Solution | Delta Compression | Cost Optimizer | Notes |
-|----------|-------------------|----------------|-------|
-| **TenPak** | ✅ **Yes (unique)** | ✅ **Yes (unique)** | 60-90% savings + auto-selection |
-| AutoGPTQ | ❌ No | ❌ No | GPTQ quantization only |
-| AutoAWQ | ❌ No | ❌ No | AWQ quantization only |
-| bitsandbytes | ❌ No | ❌ No | NF4/INT8 quantization only |
+| Solution | Delta Compression | Cost Optimizer | Smart Routing | Notes |
+|----------|-------------------|----------------|---------------|-------|
+| **Sparse** | ✅ **Yes** | ✅ **Yes** | ✅ **Yes** | Unique combination |
+| AutoGPTQ | ❌ No | ❌ No | ❌ No | GPTQ only |
+| AutoAWQ | ❌ No | ❌ No | ❌ No | AWQ only |
+| bitsandbytes | ❌ No | ❌ No | ❌ No | NF4/INT8 only |
 
-### TenPak's Value Proposition
+### Sparse's Value Proposition
 
-1. **Don't choose - optimize**: Cost optimizer benchmarks all methods, picks best
-2. **Store fine-tunes efficiently**: 60-90% savings vs full model storage
-3. **Deploy to vLLM/TGI**: One function call vs manual configuration
-4. **Stream from CDN**: Lazy-load artifacts with HTTP range requests
-5. **Unified API**: One codebase for GPTQ, AWQ, bitsandbytes
+1. **Store deltas, not duplicates**: 60-90% storage savings for fine-tunes and dataset derivatives
+2. **Don't choose - optimize**: Auto-benchmark all quantization methods, pick best for your constraints
+3. **Smart routing**: Automatically route to cheaper models when quality is acceptable
+4. **Unified API**: One codebase for GPTQ, AWQ, bitsandbytes, delta compression
 
 ---
 
-## Roadmap
-
-See [docs/ROADMAP.md](docs/ROADMAP.md) for upcoming features:
+## Current Features
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **Quantization Wrapper** | ✅ Complete | Wraps AutoGPTQ, AutoAWQ, bitsandbytes |
-| **Delta Compression** | ✅ Complete | Store fine-tunes as efficient deltas |
-| **Streamable Artifact** | ✅ Complete | Chunked, signed, content-addressed format |
-| **Cost Optimizer** | ✅ Complete | Auto-benchmark and select optimal config |
-| **HTTP Streaming** | ✅ Complete | Remote artifact loading with CDN support |
-| **vLLM/TGI Integration** | ✅ Complete | Direct inference deployment helpers |
+| **Model Delta Compression** | ✅ Complete | Store fine-tunes as 60-90% smaller deltas |
+| **Dataset Delta Compression** | ✅ Complete | Store dataset derivatives as 70-90% smaller deltas |
+| **Cost Optimizer** | ✅ Complete | Auto-benchmark GPTQ/AWQ/bitsandbytes |
+| **Smart Routing** | ✅ Complete | Route to optimal models/hardware |
+| **Quantization Wrapper** | ✅ Complete | Unified API for GPTQ, AWQ, bitsandbytes |
+| **Perplexity Evaluation** | ✅ Complete | WikiText-2 PPL benchmarking |
 
-### Future Work (Optional)
+### Roadmap
 
-Low-priority features that could be added:
+Future enhancements:
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| Ed25519 signing | Low | Current HMAC/GPG signing is adequate |
-| Monitoring dashboard | Low | Would require UI framework |
-| Multi-region CDN | Low | Infrastructure concern |
-| Advanced caching | Low | Basic HTTP caching sufficient |
+| More datasets | Medium | Support more eval datasets beyond WikiText-2 |
+| More quantization methods | Medium | Add Quanto, HQQ, etc. |
+| Multi-model routing | Low | Route across model families |
+| Cost tracking | Low | Track actual inference costs |
 
-**Note**: TenPak focuses on orchestration, not reimplementing quantization.
+**Note**: Sparse wraps existing quantization tools - we don't implement custom quantization algorithms.
 
 ---
 
 ## HuggingFace Space
 
-Try the live demo: [TenPak on HF Spaces](https://huggingface.co/spaces/gagansuie/tenpak)
+Try the live demo: [Sparse on HF Spaces](https://huggingface.co/spaces/sparselabs/sparse-demo)
 
 ---
 

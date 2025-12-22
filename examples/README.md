@@ -1,6 +1,6 @@
-# TenPak Examples
+# Sparse Examples
 
-Example scripts demonstrating TenPak's workflow with the wrapper architecture.
+Example scripts demonstrating Sparse's workflow with the wrapper architecture.
 
 ## Quick Start
 
@@ -107,10 +107,10 @@ for chunk_meta, chunk_data in streamer.stream_all_chunks():
 ### vLLM Integration
 
 ```python
-from inference.vllm_integration import TenPakVLLMLoader
+from inference.vllm_integration import SparseVLLMLoader
 
 # Create vLLM engine from artifact
-engine = TenPakVLLMLoader.create_vllm_engine(
+engine = SparseVLLMLoader.create_vllm_engine(
     artifact_path="./artifacts/mistral-7b",
     tensor_parallel_size=2,
     gpu_memory_utilization=0.9,
@@ -121,7 +121,7 @@ outputs = engine.generate(["Hello, how are you?"], max_tokens=50)
 print(outputs[0].outputs[0].text)
 
 # Or serve OpenAI-compatible API
-TenPakVLLMLoader.serve_with_vllm(
+SparseVLLMLoader.serve_with_vllm(
     artifact_path="./artifacts/mistral-7b",
     host="0.0.0.0",
     port=8000,
@@ -154,7 +154,7 @@ After running these examples, you'll have artifacts with this structure:
 ```
 artifacts/
 ├── mistral-7b/
-│   ├── manifest.json          # TenPak metadata
+│   ├── manifest.json          # Sparse metadata
 │   ├── quantization_config.json  # Tool-specific config
 │   └── model_weights/         # Quantized weights
 │       ├── model.safetensors
@@ -193,9 +193,9 @@ artifacts/
 }
 ```
 
-## What TenPak Adds
+## What Sparse Adds
 
-TenPak **doesn't replace** AutoGPTQ/AutoAWQ/bitsandbytes. It adds:
+Sparse **doesn't replace** AutoGPTQ/AutoAWQ/bitsandbytes. It adds:
 
 1. **Delta Compression** - Efficient fine-tune storage
 2. **Cost Optimizer** - Auto-benchmark and select best method

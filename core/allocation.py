@@ -1,5 +1,5 @@
 """
-TenPak Bit Allocation - Assign compression strategies per layer
+Sparse Bit Allocation - Assign compression strategies per layer
 
 Uses Fisher importance scores to allocate different quantization
 configurations to different layers. More important layers get

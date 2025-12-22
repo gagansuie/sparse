@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-TenPak HuggingFace Space Demo
+Sparse HuggingFace Space Demo
 
-Showcases TenPak's 3 unique features:
+Showcases Sparse's 3 unique features:
 1. Model Delta Compression - Store fine-tunes 60-90% smaller
 2. Dataset Delta Compression - Store derivative datasets 70-90% smaller
 3. Smart Routing - Auto-route to optimal models/hardware
@@ -13,7 +13,7 @@ Total savings: $30-45M/year for platforms like HuggingFace
 import gradio as gr
 from typing import Dict, Tuple
 
-# Mock data for demo (actual implementation would use TenPak modules)
+# Mock data for demo (actual implementation would use Sparse modules)
 MOCK_MODEL_DELTAS = {
     "meta-llama/Llama-2-7b-hf → my-org/llama-chat": {"full": 13000, "delta": 520, "savings": 96.0},
     "mistralai/Mistral-7B-v0.1 → my-org/mistral-instruct": {"full": 14000, "delta": 700, "savings": 95.0},
@@ -79,10 +79,10 @@ If HuggingFace has ~300K fine-tuned models:
 ### CLI Usage
 ```bash
 # Estimate savings
-tenpak delta estimate {example_choice.split(' → ')[0]} {example_choice.split(' → ')[1]}
+sparse delta estimate {example_choice.split(' → ')[0]} {example_choice.split(' → ')[1]}
 
 # Compress as delta
-tenpak delta compress {example_choice.split(' → ')[0]} {example_choice.split(' → ')[1]} --output ./delta
+sparse delta compress {example_choice.split(' → ')[0]} {example_choice.split(' → ')[1]} --output ./delta
 ```
 
 ### Python API
@@ -141,10 +141,10 @@ If HuggingFace has ~150K derivative datasets:
 ### CLI Usage
 ```bash
 # Estimate savings
-tenpak delta-dataset estimate {example_choice.split(' → ')[0]} {example_choice.split(' → ')[1]}
+sparse delta-dataset estimate {example_choice.split(' → ')[0]} {example_choice.split(' → ')[1]}
 
 # Compress as delta
-tenpak delta-dataset compress {example_choice.split(' → ')[0]} {example_choice.split(' → ')[1]} --output ./dataset_delta
+sparse delta-dataset compress {example_choice.split(' → ')[0]} {example_choice.split(' → ')[1]} --output ./dataset_delta
 ```
 
 ### Python API
@@ -185,7 +185,7 @@ def demonstrate_routing(task_type: str) -> str:
 
 ### Routing Analysis
 - **User Requested:** {decision['requested']}
-- **TenPak Recommends:** {decision['recommended']}
+- **Sparse Recommends:** {decision['recommended']}
 - **Hardware:** {decision['hardware']}
 - **Quality Score:** {decision['quality']:.0f}%
 - **Cost Savings:** {decision['cost_saving']:.0f}%
@@ -205,7 +205,7 @@ If HuggingFace Endpoints serves 10M requests/day:
 ### CLI Usage
 ```bash
 # Get routing recommendation
-tenpak route {decision['requested']} "Your prompt here"
+sparse route {decision['requested']} "Your prompt here"
 ```
 
 ### Python API
@@ -314,11 +314,11 @@ For HuggingFace's estimated scale:
 # Gradio Interface
 # ============================================================================
 
-with gr.Blocks(title="TenPak Demo - $30-45M/year Savings") as demo:
+with gr.Blocks(title="Sparse Demo - $30-45M/year Savings") as demo:
     gr.Markdown("""
-    # 🚀 TenPak: Delta Compression + Smart Routing for Model Hubs
+    # 🚀 Sparse: Delta Compression + Smart Routing for Model Hubs
     
-    **TenPak saves model hosting platforms $30-45M/year through 3 unique features:**
+    **Sparse saves model hosting platforms $30-45M/year through 3 unique features:**
     
     1. **Model Delta Compression** - Store fine-tunes 60-90% smaller ($15-20M/year)
     2. **Dataset Delta Compression** - Store derivatives 70-90% smaller ($10-15M/year)
@@ -368,7 +368,7 @@ with gr.Blocks(title="TenPak Demo - $30-45M/year Savings") as demo:
         
         # TAB 3: Smart Routing
         with gr.Tab("🎯 Smart Routing"):
-            gr.Markdown("### See how TenPak routes requests to optimal models/hardware")
+            gr.Markdown("### See how Sparse routes requests to optimal models/hardware")
             
             task_type = gr.Radio(
                 choices=list(ROUTING_DECISIONS.keys()),
@@ -408,13 +408,13 @@ with gr.Blocks(title="TenPak Demo - $30-45M/year Savings") as demo:
     
     ## 🔗 Links
     
-    - **GitHub:** [github.com/gagansuie/tenpak](https://github.com/gagansuie/tenpak)
+    - **GitHub:** [github.com/gagansuie/sparse](https://github.com/gagansuie/sparse)
     - **Documentation:** See README for installation and usage
     - **Pitch Deck:** See `docs/PITCH_HUGGINGFACE.md` for detailed analysis
     
-    ## ✅ Why TenPak is Unique
+    ## ✅ Why Sparse is Unique
     
-    | Feature | TenPak | Competitors |
+    | Feature | Sparse | Competitors |
     |---------|--------|-------------|
     | **Model Delta Compression** | ✅ Yes | ❌ No |
     | **Dataset Delta Compression** | ✅ Yes | ❌ No |
