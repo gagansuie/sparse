@@ -7,11 +7,8 @@ Usage:
     from core import QuantizationWrapper, QUANTIZATION_PRESETS
     
     # Quantize a model
-    wrapper = QuantizationWrapper(method="gptq", bits=4)
+    wrapper = QuantizationWrapper.from_preset("gptq_quality")
     quantized_model = wrapper.quantize(model_id)
-    
-    # Batch compression to JSON
-    artifact_json, ratio = compress_tensors_f32_json(tensors, codec, names=names)
 """
 
 # Quantization wrapper (recommended approach)
@@ -21,19 +18,6 @@ from .quantization import (
     QuantizationMethod,
     QUANTIZATION_PRESETS,
 )
-
-# Legacy Rust FFI (deprecated - use QuantizationWrapper instead)
-# Kept for backward compatibility
-from .native_ffi import (
-    roundtrip_tensor_f32,
-    compress_tensors_f32_json,
-    decompress_artifact_to_json,
-    decompress_artifact_to_tensors,
-)
-
-# Legacy codec constants (deprecated)
-CODEC_INT4_RESIDUAL = "int4_residual_v1"
-CODEC_INT4_OPT_LLAMA = "int4_opt_llama_v1"
 
 from .calibration import (
     collect_calibration_stats,
@@ -54,18 +38,11 @@ from .delta import (
 
 __version__ = "0.2.0"
 __all__ = [
-    # Quantization wrapper (recommended)
+    # Quantization wrapper
     "QuantizationWrapper",
     "QuantizationConfig",
     "QuantizationMethod",
     "QUANTIZATION_PRESETS",
-    # Legacy Rust FFI (deprecated)
-    "roundtrip_tensor_f32",
-    "compress_tensors_f32_json",
-    "decompress_artifact_to_json",
-    "decompress_artifact_to_tensors",
-    "CODEC_INT4_RESIDUAL",
-    "CODEC_INT4_OPT_LLAMA",
     # Calibration
     "collect_calibration_stats",
     "compute_ppl",

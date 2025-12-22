@@ -12,232 +12,76 @@ from typing import Optional
 
 
 def cmd_pack(args):
-    """Compress a model using Rust FFI batch compression."""
+    """Quantize a model using QuantizationWrapper, then package as artifact."""
+    from core import QuantizationWrapper
     from artifact.format import create_artifact
     
-    print(f"TenPak Pack - Compressing {args.model_id}")
-    print(f"  Codec:  {args.codec}")
+    print(f"TenPak Pack - Quantizing {args.model_id}")
+    print(f"  Preset: {args.preset}")
     print(f"  Output: {args.output or 'auto'}")
     print()
     
-    # Determine output path
+    # Auto-generate output path if not provided
     if args.output:
         output_path = args.output
     else:
         model_name = args.model_id.replace("/", "_")
-        output_path = f"tenpak_{model_name}_{args.codec}.tnpk"
-    
-    def progress_callback(msg: str, progress: float):
-        pass  # create_artifact already prints progress
+        output_path = f"tenpak_{model_name}_{args.preset}.tnpk"
     
     try:
-        artifact = create_artifact(
+        # Step 1: Quantize using wrapper
+        print("[1/2] Quantizing model...")
+        wrapper = QuantizationWrapper.from_preset(args.preset)
+        quantized_model_path = wrapper.quantize(
             model_id=args.model_id,
-            output_path=output_path,
-            codec=args.codec,
-            progress_callback=progress_callback,
+            device="cuda" if args.device == "auto" else args.device
         )
-    except RuntimeError as e:
+        
+        # Step 2: Package as artifact
+        print("[2/2] Creating artifact...")
+        artifact = create_artifact(
+            model_id=quantized_model_path,
+            output_path=output_path,
+            quantization_preset=args.preset,
+        )
+        
+        print()
+        print("=" * 60)
+        print("RESULTS")
+        print("=" * 60)
+        print(f"  Model:             {args.model_id}")
+        print(f"  Preset:            {args.preset}")
+        print(f"  Output:            {output_path}")
+        print("=" * 60)
+        
+        return 0
+        
+    except Exception as e:
         print(f"[ERROR] {e}")
         return 1
-    
-    # Print results
-    print()
-    print("=" * 60)
-    print("COMPRESSION RESULTS")
-    print("=" * 60)
-    print(f"  Model:             {args.model_id}")
-    print(f"  Codec:             {artifact.manifest.codec}")
-    print(f"  Compression:       {artifact.manifest.compression_ratio:.2f}x")
-    print(f"  Original Size:     {artifact.manifest.original_size_bytes / 1e6:.1f} MB")
-    print(f"  Compressed Size:   {artifact.manifest.compressed_size_bytes / 1e6:.1f} MB")
-    print(f"  Chunks:            {len(artifact.manifest.chunks)}")
-    print(f"  Artifact:          {output_path}")
-    print("=" * 60)
-    
-    return 0
 
 
 def cmd_pack_legacy(args):
-    """Compress a model using legacy per-layer compression with calibration."""
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    from datasets import load_dataset
-    
-    from core.calibration import collect_calibration_stats, compute_ppl
-    from core.allocation import allocate_bits
-    from studio.storage import get_storage
-    
-    # Codec constants (moved from core.codecs)
-    CODEC_V11 = "v11_hybrid_awq_vq"
-    CODEC_INT4_AWQ = "int4_awq_v1"
-    CODEC_INT4_RESIDUAL = "int4_residual_v1"
-    
-    print(f"TenPak Pack (Legacy) - Compressing {args.model_id}")
-    print(f"  Target: {args.target}")
-    print(f"  Output: {args.output or 'auto'}")
+    """DEPRECATED: Legacy compression command removed. Use QuantizationWrapper instead."""
+    print("❌ ERROR: Legacy compression command is no longer supported.")
     print()
-    
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = torch.float16 if device == "cuda" else torch.float32
-    print(f"[INFO] Using device: {device}")
-    
-    # Load model
-    print(f"[1/6] Loading model...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_id)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_id,
-        torch_dtype=dtype,
-        device_map="auto" if device == "cuda" else None,
-        low_cpu_mem_usage=True
-    )
-    
-    # Load calibration data
-    print(f"[2/6] Loading calibration data...")
-    dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
-    texts = []
-    need = max(128, args.eval_samples)
-    for item in dataset:
-        text = item.get("text", "")
-        if len(text) > 100:
-            texts.append(text)
-            if len(texts) >= need:
-                break
-    calibration_texts = texts[:128]
-    eval_texts = texts[:args.eval_samples]
-    
-    # Baseline PPL
-    print(f"[3/6] Computing baseline PPL...")
-    baseline_ppl = compute_ppl(
-        model,
-        tokenizer,
-        eval_texts,
-        device,
-        max_samples=args.eval_samples,
-        streaming=args.streaming_eval,
-        max_length=args.eval_max_length,
-        stride=args.eval_stride,
-    )
-    print(f"       Baseline PPL: {baseline_ppl:.4f}")
-    
-    # Calibration
-    print(f"[4/6] Collecting calibration stats...")
-    fisher_scores, activation_scales, hessian_diags, input_samples = \
-        collect_calibration_stats(model, tokenizer, calibration_texts, num_samples=64, device=device)
-    
-    # Allocation
-    print(f"[5/6] Allocating bits per layer...")
-    allocations = allocate_bits(model, fisher_scores, target=args.target)
-    
-    # Compression
-    print(f"[6/6] Compressing {len(allocations)} layers...")
-    total_original = 0
-    total_compressed = 0
-    compressed_weights = {}
-    
-    for i, (name, alloc) in enumerate(allocations.items()):
-        # Find module
-        module = None
-        for n, m in model.named_modules():
-            if n == name and hasattr(m, 'weight'):
-                module = m
-                break
-        
-        if module is None:
-            continue
-        
-        weight = module.weight.data
-        is_conv1d = module.__class__.__name__ == "Conv1D"
-        codec_weight = weight.T.contiguous() if is_conv1d else weight
-        orig_size = weight.numel() * 2
-        total_original += orig_size
-        
-        act_scale = activation_scales.get(name, None)
-        hessian_diag = hessian_diags.get(name, None)
-
-        # Use Rust FFI for all compression
-        deq_weight, comp_ratio = roundtrip_tensor_f32(codec_weight, CODEC_INT4_RESIDUAL)
- 
-        if is_conv1d:
-            deq_weight = deq_weight.T
- 
-        module.weight.data = deq_weight.to(weight.dtype)
-        compressed_weights[name] = deq_weight.cpu()
-        
-        compressed_size = orig_size / comp_ratio
-        total_compressed += compressed_size
-        
-        if (i + 1) % 10 == 0:
-            print(f"       Progress: {i + 1}/{len(allocations)} layers")
-    
-    compression_ratio = total_original / total_compressed if total_compressed > 0 else 1.0
-    
-    # Evaluate compressed model
-    print(f"\n[EVAL] Evaluating compressed model...")
-    compressed_ppl = compute_ppl(
-        model,
-        tokenizer,
-        eval_texts,
-        device,
-        max_samples=args.eval_samples,
-        streaming=args.streaming_eval,
-        max_length=args.eval_max_length,
-        stride=args.eval_stride,
-    )
-    ppl_delta = ((compressed_ppl - baseline_ppl) / baseline_ppl) * 100
-    
-    # Save artifact
-    if args.output:
-        output_path = args.output
-    else:
-        model_name = args.model_id.replace("/", "_")
-        output_path = f"tenpak_{model_name}_{args.target}"
-    
-    storage = get_storage(os.path.dirname(output_path) or ".")
-    used_codec = CODEC_V11 if args.target == "v11" else CODEC_INT4_AWQ
-    if getattr(args, "codec", "auto") == CODEC_INT4_RESIDUAL:
-        used_codec = CODEC_INT4_RESIDUAL
-
-    artifact_path = storage.save_artifact(
-        job_id=os.path.basename(output_path),
-        model_id=args.model_id,
-        compressed_weights=compressed_weights,
-        allocations=allocations,
-        metrics={
-            "compression_ratio": compression_ratio,
-            "baseline_ppl": baseline_ppl,
-            "compressed_ppl": compressed_ppl,
-            "ppl_delta": ppl_delta,
-        },
-        codec=used_codec
-    )
-    
-    # Print results
+    print("The custom Rust compression codecs have been removed in TenPak v0.2.0.")
+    print("TenPak now wraps industry-standard quantization tools instead.")
     print()
-    print("=" * 60)
-    print("COMPRESSION RESULTS")
-    print("=" * 60)
-    print(f"  Model:             {args.model_id}")
-    print(f"  Target:            {args.target}")
-    print(f"  Compression:       {compression_ratio:.2f}x")
-    print(f"  Baseline PPL:      {baseline_ppl:.4f}")
-    print(f"  Compressed PPL:    {compressed_ppl:.4f}")
-    print(f"  PPL Delta:         {ppl_delta:+.2f}%")
-    print(f"  Original Size:     {total_original / 1e6:.1f} MB")
-    print(f"  Compressed Size:   {total_compressed / 1e6:.1f} MB")
-    print(f"  Artifact:          {artifact_path}")
-    print("=" * 60)
-    
-    # Status
-    if ppl_delta < 2.0:
-        print("✅ PASS - PPL delta under 2%")
-    else:
-        print("⚠️  WARN - PPL delta over 2%")
-    
-    return 0
+    print("Please use one of these commands instead:")
+    print()
+    print("  # Quantize with a preset:")
+    print("  tenpak pack <model> --preset awq_balanced")
+    print()
+    print("  # Available presets:")
+    print("  - gptq_quality, gptq_balanced, gptq_aggressive")
+    print("  - awq_quality, awq_balanced, awq_fast")
+    print("  - bnb_nf4, bnb_int8")
+    print()
+    print("  # Or use the optimizer to auto-select:")
+    print("  tenpak optimize <model> --max-ppl-delta 2.0")
+    print()
+    return 1
 
 
 def cmd_eval(args):
@@ -726,42 +570,45 @@ def cmd_artifact(args):
 
 
 def cmd_artifact_create(args):
-    """Create .tnpk artifact from model."""
+    """Create .tnpk artifact from quantized model."""
     from artifact import create_artifact
+    from core import QuantizationWrapper
     
     print(f"TenPak Artifact Create")
     print(f"  Model:  {args.model_id}")
     print(f"  Output: {args.output}")
-    print(f"  Codec:  {args.codec}")
+    print(f"  Preset: {args.preset}")
     print()
     
-    def progress_callback(msg, progress):
-        bar_width = 30
-        filled = int(bar_width * progress)
-        bar = "█" * filled + "░" * (bar_width - filled)
-        print(f"\r[{bar}] {progress*100:5.1f}% - {msg[:50]:<50}", end="", flush=True)
-        if progress >= 1.0:
-            print()
-    
-    artifact = create_artifact(
-        model_id=args.model_id,
-        output_path=args.output,
-        codec=args.codec,
-        progress_callback=progress_callback,
-    )
-    
-    print()
-    print("=" * 60)
-    print("ARTIFACT CREATED")
-    print("=" * 60)
-    print(f"  Model:       {artifact.manifest.model_id}")
-    print(f"  Chunks:      {len(artifact.manifest.chunks)}")
-    print(f"  Compression: {artifact.manifest.compression_ratio:.2f}x")
-    print(f"  Size:        {artifact.manifest.compressed_size_bytes / 1e6:.1f} MB")
-    print(f"  Path:        {args.output}")
-    print("=" * 60)
-    
-    return 0
+    try:
+        # Step 1: Quantize
+        print("[1/2] Quantizing model...")
+        wrapper = QuantizationWrapper.from_preset(args.preset)
+        quantized_path = wrapper.quantize(model_id=args.model_id)
+        
+        # Step 2: Create artifact
+        print("[2/2] Creating artifact...")
+        artifact = create_artifact(
+            model_id=quantized_path,
+            output_path=args.output,
+            quantization_preset=args.preset,
+        )
+        
+        print()
+        print("=" * 60)
+        print("ARTIFACT CREATED")
+        print("=" * 60)
+        print(f"  Model:       {args.model_id}")
+        print(f"  Preset:      {args.preset}")
+        print(f"  Chunks:      {len(artifact.manifest.chunks)}")
+        print(f"  Size:        {artifact.manifest.compressed_size_bytes / 1e6:.1f} MB")
+        print(f"  Path:        {args.output}")
+        print("=" * 60)
+        
+        return 0
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        return 1
 
 
 def cmd_artifact_info(args):
@@ -871,9 +718,9 @@ def main():
     pack_parser.add_argument("model_id", help="HuggingFace model ID or local path")
     pack_parser.add_argument(
         "--target", "-t",
-        choices=["quality", "balanced", "size", "v11"],
+        choices=["quality", "balanced", "size"],
         default="balanced",
-        help="Compression target (default: balanced)"
+        help="Target preset mapping: quality=gptq_quality, balanced=awq_balanced, size=gptq_aggressive (deprecated, use --preset instead)"
     )
     pack_parser.add_argument(
         "--output", "-o",
@@ -903,21 +750,25 @@ def main():
         help="Stride for streaming PPL evaluation (default: 512)"
     )
     pack_parser.add_argument(
-        "--codec",
+        "--preset",
         choices=[
-            "int4_residual_v1",
-            "int4_opt_llama_v1",
-            "int4_spin_v1",
-            "int4_10x_v1",
-            "int4_mixed_v1",
-            "int4_hybrid_v1",
-            "int4_hybrid_v2",
-            "int4_awq_10x_v1",
-            "int4_gptq_lite_v1",
-            "int4_ultimate_v1",
+            "gptq_quality",
+            "gptq_balanced",
+            "gptq_aggressive",
+            "awq_quality",
+            "awq_balanced",
+            "awq_fast",
+            "bnb_nf4",
+            "bnb_int8",
+            "fp16",
         ],
-        required=True,
-        help="Compression codec (required). Recommended: int4_residual_v1 for best quality, int4_opt_llama_v1 for Llama models"
+        default="awq_balanced",
+        help="Quantization preset (default: awq_balanced). Use 'gptq_quality' for best compression, 'bnb_nf4' for fast no-calibration"
+    )
+    pack_parser.add_argument(
+        "--device",
+        default="auto",
+        help="Device to use (auto, cuda, cpu)"
     )
     
     # eval command
@@ -1071,9 +922,9 @@ def main():
         help="Also create a .tnpk artifact in the package"
     )
     deploy_parser.add_argument(
-        "--artifact-codec",
-        default="int4_awq",
-        help="Codec to use when creating a .tnpk artifact (default: int4_awq)"
+        "--artifact-preset",
+        default="awq_balanced",
+        help="Quantization preset to use when creating a .tnpk artifact (default: awq_balanced)"
     )
 
     # native command
@@ -1130,9 +981,9 @@ def main():
         help="Output path for .tnpk artifact"
     )
     artifact_create.add_argument(
-        "--codec",
-        default="int4_awq",
-        help="Compression codec (default: int4_awq)"
+        "--preset",
+        default="awq_balanced",
+        help="Quantization preset (default: awq_balanced)"
     )
     
     # artifact info

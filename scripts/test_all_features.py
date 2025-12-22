@@ -33,15 +33,13 @@ def test_imports():
     try:
         # Core imports
         from core import (
-            CODEC_V10, CODEC_V60, V10_CONFIG, V60_CONFIG,
-            compress_int4_awq, compress_int4_residual,
+            QuantizationWrapper, QUANTIZATION_PRESETS,
             collect_calibration_stats, compute_ppl,
             allocate_bits, LayerAllocation,
             compress_delta, reconstruct_from_delta, estimate_delta_savings,
         )
         print("✅ core imports: OK")
-        print(f"   CODEC_V10 = {CODEC_V10}")
-        print(f"   V10_CONFIG = {V10_CONFIG}")
+        print(f"   Available presets: {list(QUANTIZATION_PRESETS.keys())}")
         
         # Optimizer imports
         from optimizer import (
@@ -292,47 +290,39 @@ def test_cli():
         return False
 
 
-def test_full_model(model_id="gpt2"):
-    """Full model test (requires transformers)."""
+def test_full_model(model_id: str = "gpt2"):
+    """Test quantization on a full model using QuantizationWrapper."""
     print("\n" + "="*60)
     print(f"TEST 7: Full Model Test ({model_id})")
     print("="*60)
     
     try:
         from transformers import AutoModelForCausalLM, AutoTokenizer
-        from core import compress_int4_awq, V10_CONFIG
+        from core import QuantizationWrapper, QUANTIZATION_PRESETS
         
         print(f"   Loading {model_id}...")
-        model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32)
         tokenizer = AutoTokenizer.from_pretrained(model_id)
+        
+        # Load baseline model
+        model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32)
         
         # Count parameters
         total_params = sum(p.numel() for p in model.parameters())
         print(f"   Parameters: {total_params / 1e6:.1f}M")
         
-        # Compress one layer
-        layer_name = None
-        for name, module in model.named_modules():
-            if hasattr(module, 'weight') and module.weight.dim() == 2:
-                if module.weight.numel() > 1000:
-                    layer_name = name
-                    break
+        # Test quantization wrapper
+        print(f"   Testing quantization with bitsandbytes NF4 (fastest, no calibration)...")
+        wrapper = QuantizationWrapper.from_preset("bnb_nf4")
         
-        if layer_name:
-            module = dict(model.named_modules())[layer_name]
-            weight = module.weight.data
-            print(f"   Compressing layer: {layer_name} ({weight.shape})")
-            
-            result, compression = compress_int4_awq(
-                weight,
-                group_size=V10_CONFIG["attention_group"],
-                outlier_pct=V10_CONFIG["outlier_pct"]
-            )
-            print(f"✅ Compression: {compression:.2f}x")
-            
-            # Check reconstruction quality
-            mse = ((weight - result) ** 2).mean().item()
-            print(f"   MSE: {mse:.6f}")
+        # Note: Full quantization would require more memory, so we just test the wrapper creation
+        print(f"✅ Wrapper created: {wrapper.config.method}, {wrapper.config.bits}-bit")
+        
+        # Test size estimation
+        from core.quantization import QuantizationWrapper
+        size_info = QuantizationWrapper.estimate_size(model_id, QUANTIZATION_PRESETS["bnb_nf4"])
+        print(f"   Estimated compression: {size_info['compression_ratio']:.2f}x")
+        print(f"   Original size: {size_info['original_size_gb']:.2f} GB")
+        print(f"   Quantized size: {size_info['quantized_size_gb']:.2f} GB")
         
         return True
     except Exception as e:

@@ -153,11 +153,8 @@ def optimize_model(
     """
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from datasets import load_dataset
-    from core.calibration import compute_ppl, collect_calibration_stats
-    from core.allocation import allocate_bits
-    
-    # Codec constant
-    CODEC_INT4_RESIDUAL = "int4_residual_v1"
+    from core import QuantizationWrapper
+    from core.calibration import compute_ppl
     
     start_time = datetime.utcnow()
     
@@ -236,20 +233,8 @@ def optimize_model(
     )
     log(f"Baseline PPL: {baseline_ppl:.4f}", 0.20)
     
-    # Collect calibration stats if needed
-    fisher_scores = {}
-    activation_scales = {}
-    hessian_diags = {}
-    if include_calibration:
-        log("Collecting calibration stats...", 0.22)
-        fisher_scores, activation_scales, hessian_diags, _ = collect_calibration_stats(
-            baseline_model,
-            tokenizer,
-            texts[:128],
-            num_samples=64,
-            device=device,
-        )
-        log("Calibration complete", 0.28)
+    # Note: Calibration is now handled by each quantization tool (GPTQ/AWQ)
+    # We just need to provide calibration text data
     
     # Evaluate each candidate
     all_results = []
@@ -268,120 +253,42 @@ def optimize_model(
                 low_cpu_mem_usage=True,
             )
             
-            # Compress based on method
-            compression_ratio = 1.0
+            # Quantize using QuantizationWrapper
+            compression_ratio = candidate.expected_compression
             
-            if candidate.method == CompressionMethod.FP16:
-                # Baseline - no compression
+            if candidate.method == QuantizationMethod.FP16:
+                # Baseline - no quantization needed, model already loaded
                 pass
-            elif candidate.method == CompressionMethod.INT4_AWQ:
-                # AWQ compression
-                act_scales = activation_scales
-                total_original = 0
-                total_compressed = 0
+            else:
+                # Use QuantizationWrapper for GPTQ, AWQ, bitsandbytes
+                log(f"  Quantizing with {candidate.method.value}...", progress + 0.2 * progress_per_candidate)
                 
-                for name, module in model.named_modules():
-                    if hasattr(module, 'weight') and module.weight is not None:
-                        if len(module.weight.shape) == 2:  # Linear/Conv1D layers
-                            weight = module.weight.data
-                            is_conv1d = module.__class__.__name__ == "Conv1D"
-                            codec_weight = weight.T.contiguous() if is_conv1d else weight
-                            act_scale = act_scales.get(name)
-                            
-                            deq_weight, comp = compress_int4_awq(
-                                codec_weight,
-                                group_size=candidate.config.get("group_size", 256),
-                                act_scale=act_scale,
-                                outlier_pct=candidate.config.get("outlier_pct", 0.5),
-                            )
- 
-                            if is_conv1d:
-                                deq_weight = deq_weight.T
- 
-                            module.weight.data = deq_weight.to(weight.dtype)
-                            total_original += weight.numel() * 2
-                            total_compressed += weight.numel() * 2 / comp
+                # Free the baseline model first
+                del model
+                if device == "cuda":
+                    torch.cuda.empty_cache()
                 
-                if total_compressed > 0:
-                    compression_ratio = total_original / total_compressed
-                    
-            elif candidate.method == CompressionMethod.INT4_RESIDUAL:
-                # INT4+Residual compression
-                total_original = 0
-                total_compressed = 0
+                # Prepare calibration data if needed
+                calibration_data = None
+                if candidate.requires_calibration:
+                    dataset_calib = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
+                    calib_texts = [item.get("text", "") for item in dataset_calib if len(item.get("text", "")) > 100][:128]
+                    calibration_data = calib_texts
                 
-                for name, module in model.named_modules():
-                    if hasattr(module, 'weight') and module.weight is not None:
-                        if len(module.weight.shape) == 2:
-                            weight = module.weight.data
-                            is_conv1d = module.__class__.__name__ == "Conv1D"
-                            codec_weight = weight.T.contiguous() if is_conv1d else weight
-                            
-                            deq_weight, comp = compress_int4_residual(
-                                codec_weight,
-                                group_size=candidate.config.get("group_size", 16),
-                                residual_group=candidate.config.get("residual_group", 16),
-                            )
- 
-                            if is_conv1d:
-                                deq_weight = deq_weight.T
- 
-                            module.weight.data = deq_weight.to(weight.dtype)
-                            total_original += weight.numel() * 2
-                            total_compressed += weight.numel() * 2 / comp
+                # Create wrapper from candidate config
+                from core import QuantizationConfig
+                config = QuantizationConfig(
+                    method=candidate.method.value,
+                    **candidate.config
+                )
+                wrapper = QuantizationWrapper(config)
                 
-                if total_compressed > 0:
-                    compression_ratio = total_original / total_compressed
-
-            elif candidate.method == CompressionMethod.HYBRID_AWQ_VQ:
-                if not fisher_scores:
-                    raise RuntimeError("Hybrid candidate requires calibration stats (fisher_scores)")
-
-                allocations = allocate_bits(baseline_model, fisher_scores, target="v11")
-                modules_by_name = {n: m for n, m in model.named_modules()}
-                total_original = 0
-                total_compressed = 0
-
-                for layer_name, alloc in allocations.items():
-                    module = modules_by_name.get(layer_name)
-                    if module is None or not hasattr(module, "weight") or module.weight is None:
-                        continue
-
-                    weight = module.weight.data
-                    is_conv1d = module.__class__.__name__ == "Conv1D"
-                    codec_weight = weight.T.contiguous() if is_conv1d else weight
-                    if weight.dim() != 2:
-                        continue
-
-                    orig_size = weight.numel() * 2
-                    act_scale = activation_scales.get(layer_name)
-                    hessian_diag = hessian_diags.get(layer_name)
-
-                    if alloc.method == "calibrated_vq":
-                        deq_weight, comp = compress_calibrated_vq(
-                            codec_weight,
-                            vec_dim=alloc.vq_vec_dim,
-                            codebook_size=alloc.vq_codebook_size,
-                            hessian_diag=hessian_diag,
-                            act_scale=act_scale,
-                        )
-                    else:
-                        deq_weight, comp = compress_int4_awq(
-                            codec_weight,
-                            group_size=alloc.group_size,
-                            act_scale=act_scale,
-                            outlier_pct=candidate.config.get("awq_outlier_pct", 0.5),
-                        )
-
-                    if is_conv1d:
-                        deq_weight = deq_weight.T
-
-                    module.weight.data = deq_weight.to(weight.dtype)
-                    total_original += orig_size
-                    total_compressed += orig_size / comp
-
-                if total_compressed > 0:
-                    compression_ratio = total_original / total_compressed
+                # Quantize (delegates to AutoGPTQ/AutoAWQ/bitsandbytes)
+                model = wrapper.quantize(
+                    model_id=model_id,
+                    calibration_data=calibration_data,
+                    device=device
+                )
             
             # Compute compressed PPL
             log(f"  Computing PPL for {candidate.name}...", progress + 0.3 * progress_per_candidate)

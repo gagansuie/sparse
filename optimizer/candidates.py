@@ -179,8 +179,8 @@ def generate_custom_candidates(
     """Generate custom candidates from method + group size combinations.
     
     Args:
-        methods: List of method names ("awq", "int4", "residual")
-        group_sizes: List of group sizes to try
+        methods: List of method names ("gptq", "awq", "bitsandbytes")
+        group_sizes: List of group sizes to try (for GPTQ/AWQ)
         include_baseline: Whether to include FP16 baseline
         
     Returns:
@@ -192,31 +192,35 @@ def generate_custom_candidates(
         candidates.append(CANDIDATE_PRESETS["fp16"])
     
     for method in methods:
-        for g in group_sizes:
-            if method == "awq":
-                # Estimate compression and PPL based on group size
-                compression = 16 / (4 + 16/g)  # INT4 + scales overhead (vs FP16 baseline)
-                ppl_delta = 0.5 + (g / 256)  # Larger groups = more PPL
+        if method == "gptq":
+            for g in group_sizes:
+                compression = 16 / (4 + 16/g)
+                ppl_delta = 0.8 + (g / 256)
                 
                 candidates.append(CompressionCandidate(
-                    name=f"AWQ g={g}",
-                    method=CompressionMethod.INT4_AWQ,
-                    config={"group_size": g, "outlier_pct": 0.5, "iterations": 5},
+                    name=f"GPTQ 4-bit g={g}",
+                    method=QuantizationMethod.GPTQ,
+                    config={"bits": 4, "group_size": g, "desc_act": False, "sym": True},
                     expected_compression=compression,
                     expected_ppl_delta=ppl_delta,
                     requires_calibration=True,
                 ))
-            elif method == "int4":
+        elif method == "awq":
+            for g in group_sizes:
                 compression = 16 / (4 + 16/g)
-                ppl_delta = 1.0 + (g / 128)
+                ppl_delta = 0.5 + (g / 256)
                 
                 candidates.append(CompressionCandidate(
-                    name=f"INT4 g={g}",
-                    method=CompressionMethod.INT4_OPT,
-                    config={"group_size": g, "iterations": 5},
+                    name=f"AWQ 4-bit g={g}",
+                    method=QuantizationMethod.AWQ,
+                    config={"bits": 4, "group_size": g, "zero_point": True},
                     expected_compression=compression,
                     expected_ppl_delta=ppl_delta,
-                    requires_calibration=False,
+                    requires_calibration=True,
                 ))
+        elif method == "bitsandbytes":
+            # bitsandbytes doesn't use group sizes
+            candidates.append(CANDIDATE_PRESETS["bnb_nf4"])
+            candidates.append(CANDIDATE_PRESETS["bnb_int8"])
     
     return candidates
