@@ -1,3 +1,5 @@
+# DEMO VERSION - Proprietary software not included
+
 #!/usr/bin/env python3
 """
 Sparse HuggingFace Space Demo

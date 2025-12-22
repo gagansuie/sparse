@@ -53,7 +53,7 @@ jobs:
       - name: Push to HuggingFace Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+          HF_SPACE_ID: gagansuie/sparse-demo
         run: |
           cd /tmp/hf-space
           
