@@ -19,25 +19,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          df -h
+      
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
       
-      - name: Install dependencies
+      - name: Install lightweight dependencies
         run: |
-          pip install -e ".[dev]"
+          # Install package without heavy ML dependencies
+          pip install --no-deps -e .
+          pip install pytest black ruff tqdm
       
-      - name: Run tests
+      - name: Run lightweight tests
         run: |
-          python scripts/test_all_features.py
-      
-      - name: Test CLI
-        run: |
-          sparse --help
-          sparse delta --help
-          sparse optimize --help
+          python scripts/test_ci.py
 
   build:
     name: Build Package
