@@ -94,93 +94,26 @@ jobs:
       - name: Build deliverables package
         run: |
           VERSION=${{ steps.get_version.outputs.version }}
-          mkdir -p deliverables/v$VERSION
+          mkdir -p sparse-v$VERSION
           
-          # 1. Source code (full library)
-          cp -r core deliverables/v$VERSION/
-          cp -r optimizer deliverables/v$VERSION/
-          cp -r cli deliverables/v$VERSION/
-          cp pyproject.toml deliverables/v$VERSION/
-          cp README.md deliverables/v$VERSION/
-          cp LICENSE deliverables/v$VERSION/
-          cp DELIVERABLES_CHECKLIST.md deliverables/v$VERSION/ 2>/dev/null || true
+          # Copy essentials only
+          cp -r core sparse-v$VERSION/
+          cp -r optimizer sparse-v$VERSION/
+          cp -r cli sparse-v$VERSION/
+          cp -r dist sparse-v$VERSION/
+          cp pyproject.toml sparse-v$VERSION/
+          cp README.md sparse-v$VERSION/
+          cp LICENSE sparse-v$VERSION/
+          cp requirements.txt sparse-v$VERSION/
           
-          # 2. Built wheels
-          cp -r dist deliverables/v$VERSION/
-          
-          # 3. Documentation
-          cp -r docs deliverables/v$VERSION/
-          cp -r examples deliverables/v$VERSION/
-          
-          # 4. Tests
-          cp -r tests deliverables/v$VERSION/
-          cp -r scripts deliverables/v$VERSION/
-          
-          # 5. Create manifest
-          cat > deliverables/v$VERSION/DELIVERABLES.md << EOF
-          # Sparse Deliverables Package
-          
-          Version: v$VERSION
-          Date: $(date -u +"%Y-%m-%d")
-          Commit: ${{ github.sha }}
-          Branch: ${{ github.ref_name }}
-          
-          ## Contents
-          
-          ### 1. Source Code
-          - `core/` - Core delta compression and dataset delta modules
-          - `optimizer/` - Cost optimizer and smart routing
-          - `cli/` - Command-line interface
-          - `pyproject.toml` - Package configuration
-          
-          ### 2. Pre-built Package
-          - `dist/` - Python wheels (.whl) for pip install
-          
-          ### 3. Documentation
-          - `docs/` - Full technical documentation
-          - `examples/` - Usage examples
-          - `README.md` - Quick start guide
-          
-          ### 4. Tests
-          - `tests/` - Full test suite (pytest)
-          - `scripts/` - Test runners and utilities
-          
-          ## Installation (HuggingFace Internal)
-          
-          ```bash
-          # Option 1: Install from wheel
-          pip install dist/sparse-*.whl
-          
-          # Option 2: Install from source
-          pip install -e .
-          ```
-          
-          ## Integration
-          
-          See `docs/INTEGRATION_GUIDE.md` for HuggingFace-specific integration.
-          
-          ## License
-          
-          PROPRIETARY SOFTWARE - Sparse Labs
-          Licensed for HuggingFace internal use only.
-          See LICENSE file for full terms.
-          
-          ## Contact
-          
-          Sparse Labs
-          Email: gagan.suie@sparselabs.ai
-          EOF
-          
-          # 6. Create tarball
-          cd deliverables
-          tar -czf sparse-v$VERSION-deliverables.tar.gz v$VERSION/
-          sha256sum sparse-v$VERSION-deliverables.tar.gz > sparse-v$VERSION-deliverables.tar.gz.sha256
+          # Create tarball
+          tar -czf sparse-v$VERSION.tar.gz sparse-v$VERSION/
       
       - name: Upload deliverables
         uses: actions/upload-artifact@v4
         with:
-          name: sparse-v${{ steps.get_version.outputs.version }}-deliverables
-          path: deliverables/sparse-*.tar.gz*
+          name: sparse-v${{ steps.get_version.outputs.version }}
+          path: sparse-v${{ steps.get_version.outputs.version }}.tar.gz
           retention-days: 90
           overwrite: true
       
@@ -193,17 +126,33 @@ jobs:
           # Delete existing release if it exists
           gh release delete v$VERSION --yes 2>/dev/null || true
           
-          # Create new release (always latest for this version)
+          # Create new release
           gh release create v$VERSION \
-            --title "Sparse v$VERSION - PROPRIETARY (Latest)" \
-            --notes "⚠️ PROPRIETARY SOFTWARE - For authorized clients only
+            --title "Sparse v$VERSION" \
+            --notes "## Sparse - Delta Compression for LLM Model Hubs
           
-          **Latest Build:**
-          - Commit: ${{ github.sha }}
-          - Branch: ${{ github.ref_name }}
-          - Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          **⚠️ PROPRIETARY SOFTWARE** - For authorized clients only
           
-          This release is automatically updated on every commit to maintain the latest v$VERSION build.
+          ### Installation
+          \`\`\`bash
+          # Extract and install
+          tar -xzf sparse-v$VERSION.tar.gz
+          cd sparse-v$VERSION
+          pip install dist/sparse-*.whl
+          \`\`\`
+          
+          ### Contents
+          - Python library source code (core/, optimizer/, cli/)
+          - Pre-built wheel for easy installation
+          - Configuration and dependencies
+          
+          ### Build Info
+          - **Commit:** ${{ github.sha }}
+          - **Branch:** ${{ github.ref_name }}
+          - **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          ### Contact
+          **Sparse Labs**  
+          Email: gagan.suie@sparselabs.ai
           " \
-            --prerelease \
-            deliverables/sparse-*.tar.gz*
+            sparse-v$VERSION.tar.gz
