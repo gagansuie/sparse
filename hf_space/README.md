@@ -1,171 +1,80 @@
----
-title: Sparse - $30-45M/year Savings Demo
-emoji: 🚀
-colorFrom: blue
-colorTo: purple
-sdk: gradio
-sdk_version: 4.0.0
-app_file: app.py
-pinned: false
----
+# Sparse - Model Optimization Testing Space
 
-# Sparse - Delta Compression + Smart Routing for Model Hubs
-
-**Interactive demo showcasing $30-45M/year in savings for platforms like HuggingFace.**
+Test Sparse's model optimization features with large language models (up to 70B parameters).
 
 ## Features
 
-### 1. 📦 Model Delta Compression ($15-20M/year)
-Store fine-tuned models as 60-90% smaller deltas from base models.
+This Space allows you to test:
 
-**Example:** Llama-2-7B fine-tune
-- Full model: 13 GB
-- Delta: 500 MB
-- Savings: **96%**
+### 📦 Quantization Size Estimation
+- Test any HuggingFace model (including 70B models)
+- Multiple quantization presets (GPTQ, AWQ, bitsandbytes)
+- Accurate compression ratio predictions
+- Works without downloading full models
 
-### 2. 📊 Dataset Delta Compression ($10-15M/year)
-Store derivative datasets as 70-90% smaller deltas from base datasets.
-
-**Example:** squad → squad_v2
-- Full dataset: 87.5 MB
-- Delta: 21.3 MB
-- Savings: **76%**
-
-### 3. 🎯 Smart Routing ($5-10M/year)
-Auto-route inference requests to optimal models/hardware.
-
-**Example:** Simple question
-- Requested: Llama-2-70B on A100
-- Recommended: Llama-2-7B on T4
-- Savings: **90% cost reduction**
-
-### 📋 Quantization Presets
-- Explore 9 available presets (GPTQ, AWQ, bitsandbytes)
-- See expected compression, quality loss, and use cases
-- Get CLI and Python code examples
+### 🎯 Smart Routing
+- Classify request complexity (SIMPLE, MODERATE, COMPLEX, EXTREME)
+- Get model recommendations based on prompt
+- Optimize cost while maintaining quality
+- Hardware routing suggestions
 
 ### 💰 Cost Optimizer
-- Set your constraints (max PPL delta, min compression)
-- See which method Sparse would auto-select
-- Compare against alternative methods
-- **Saves 30-40% vs manual selection**
+- Generate optimization candidates
+- Apply quality/latency/throughput constraints
+- Compare different quantization methods
+- Find optimal configuration for your use case
 
-### 📦 Delta Compression
-- Calculate storage savings for fine-tunes
-- See cost reduction for hosting 1000+ models
-- **Unique feature: 60-90% savings** (no competitors offer this)
+### 💵 Savings Estimation
+- Estimate annual/monthly cost savings
+- Based on your request volume
+- Configurable optimization rate
+- Real-world ROI calculations
 
-### ⚖️ Feature Comparison
-- Sparse vs AutoGPTQ, AutoAWQ, bitsandbytes
-- See what makes Sparse different (orchestration, not algorithms)
+## How It Works
 
-## Total Savings for HuggingFace Scale
+Sparse uses advanced techniques to optimize LLM inference:
 
-| Feature | Annual Value |
-|---------|-------------|
-| Model delta compression | $15-20M |
-| Dataset delta compression | $10-15M |
-| Smart routing | $5-10M |
-| **Total** | **$30-45M/year** |
+1. **Delta Compression**: Store fine-tuned models as sparse deltas from base models (up to 95% smaller)
+2. **Smart Routing**: Automatically route requests to optimal model/hardware combinations
+3. **Quantization**: Reduce model size with minimal quality loss (3-8x compression)
+4. **Cost Optimization**: Find the best configuration for your constraints
 
-## Why Sparse is Unique
+## Running Locally
 
-**No competitor offers:**
-- ✅ LLM model delta compression at scale
-- ✅ Dataset delta compression for derivatives
-- ✅ Cross-tool smart routing
-
-**What others have:**
-- ❌ AutoGPTQ/AWQ/bitsandbytes (quantization only)
-- ❌ Cloudflare CDN (HF already has this)
-- ❌ TGI (HF already built this)
-
-## Sparse's Unique Value
-
-**We don't replace quantization tools - we orchestrate them:**
-
-1. 🎯 **Auto-optimization** - Benchmark all methods, pick cheapest
-2. 📦 **Delta compression** - 60-90% savings for fine-tunes
-3. 🌐 **HTTP streaming** - CDN-friendly artifact downloads
-4. 🚀 **One-line deployment** - Direct vLLM/TGI integration
-
-## Quantization Results (Via Wrapped Tools)
-
-| Method | Compression | PPL Δ | Calibration |
-|--------|-------------|-------|-------------|
-| **AWQ 4-bit** | 7-8x | <2% | Required |
-| **GPTQ 4-bit** | 7-8x | <1% | Required |
-| **bitsandbytes NF4** | 6-7x | <1.5% | Optional |
-| **bitsandbytes INT8** | 2x | <0.5% | No |
-
-## Quick Start
+To run this Space locally:
 
 ```bash
-# Install
-pip install sparse
+# Clone the repository
+git clone https://github.com/yourusername/sparse
+cd sparse
 
-# Model delta compression
-sparse delta compress meta-llama/Llama-2-7b my-org/llama-chat --output ./delta
+# Install dependencies
+pip install -r requirements-space.txt
 
-# Dataset delta compression
-sparse delta-dataset compress squad squad_v2 --output ./dataset_delta
-
-# Smart routing
-sparse route meta-llama/Llama-2-70b "What is the capital of France?"
+# Run the app
+python app.py
 ```
 
-## Python API
+## Testing with 70B Models
 
-```python
-# Model delta compression
-from core.delta import compress_delta, estimate_delta_savings
+This Space is designed to work with HuggingFace's infrastructure, which provides:
+- GPU access for larger models
+- Fast model metadata loading
+- Accurate size estimation without full downloads
 
-savings = estimate_delta_savings(
-    base_model_id="meta-llama/Llama-2-7b-hf",
-    finetuned_model_id="my-org/llama-chat"
-)
-print(f"Savings: {savings['savings_pct']:.1f}%")
+Try these models:
+- `meta-llama/Llama-2-70b-hf` (70B parameters)
+- `meta-llama/Llama-2-13b-hf` (13B parameters)
+- `meta-llama/Llama-2-7b-hf` (7B parameters)
+- `mistralai/Mistral-7B-v0.1` (7B parameters)
 
-# Dataset delta compression
-from core.dataset_delta import compress_dataset_delta
+## Learn More
 
-manifest = compress_dataset_delta(
-    base_dataset_id="squad",
-    derivative_dataset_id="squad_v2",
-    output_dir="./dataset_delta"
-)
+- **GitHub**: [Sparse Repository](https://github.com/yourusername/sparse)
+- **Documentation**: Full API reference and integration guides
+- **Benchmarks**: See benchmarks/BENCHMARK_RESULTS.md for test results
+- **Paper**: Read about the techniques behind Sparse
 
-# Smart routing
-from optimizer.routing import suggest_optimal_model
+## License
 
-decision = suggest_optimal_model(
-    requested_model="meta-llama/Llama-2-70b-hf",
-    prompt="What is 2+2?",
-    quality_threshold=0.85
-)
-print(f"Recommended: {decision.recommended_model}")
-print(f"Savings: {decision.reasoning}")
-```
-
-## Links
-
-- **GitHub:** [github.com/gagansuie/sparse](https://github.com/gagansuie/sparse)
-- **Documentation:** [README](https://github.com/gagansuie/sparse#readme)
-- **License:** MIT
-
----
-
-**Note:** This is an interactive demo. For actual model quantization, install Sparse and use the CLI or Python API.
-
----
-
-## ⚠️ Demo Only - Proprietary Software
-
-This is a **demonstration** using mock data to showcase Sparse's capabilities.
-
-The actual Sparse library is **proprietary software** and not publicly available.
-
-**For licensing inquiries:**
-- **Sparse Labs**
-- **Email:** gagan.suie@sparselabs.ai
-- **Website:** https://sparselabs.ai
+MIT License - See LICENSE file for details

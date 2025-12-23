@@ -15,10 +15,11 @@ permissions:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest, macos-latest]
         python-version: ['3.9', '3.10', '3.11']
     steps:
       - uses: actions/checkout@v4
@@ -38,11 +39,53 @@ jobs:
       - name: Run lightweight tests
         run: |
           python scripts/test_ci.py
+  
+  test-rust:
+    name: Test Rust Acceleration (Python ${{ matrix.python-version }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ['3.9', '3.10', '3.11']
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      
+      - name: Install maturin
+        run: pip install maturin
+      
+      - name: Build Rust extension
+        run: |
+          cd rust/
+          maturin develop --release
+      
+      - name: Install Python dependencies
+        run: |
+          pip install --no-deps -e .
+          pip install pytest numpy torch
+      
+      - name: Test Rust integration
+        run: pytest tests/test_rust_integration.py -v
+      
+      - name: Benchmark Rust vs Python
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        run: python benchmarks/bench_rust_vs_python.py
 
   build:
     name: Build Package
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, test-rust]
     steps:
       - uses: actions/checkout@v4
       
@@ -100,9 +143,11 @@ jobs:
           cp -r core sparse-v$VERSION/
           cp -r optimizer sparse-v$VERSION/
           cp -r cli sparse-v$VERSION/
+          cp -r rust sparse-v$VERSION/
           cp -r dist sparse-v$VERSION/
           cp pyproject.toml sparse-v$VERSION/
           cp README.md sparse-v$VERSION/
+          cp RUST_QUICKSTART.md sparse-v$VERSION/
           cp LICENSE sparse-v$VERSION/
           cp requirements.txt sparse-v$VERSION/
           

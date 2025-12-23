@@ -4,44 +4,7 @@ Example scripts demonstrating Sparse's workflow with the wrapper architecture.
 
 ## Quick Start
 
-### 1. Quantize and Serve a Model
-
-```bash
-# Install dependencies (choose your quantization tool)
-pip install auto-gptq  # or autoawq, or bitsandbytes
-pip install vllm  # optional, for serving
-
-# Quantize Mistral-7B with AWQ
-python examples/quantize_and_serve.py mistralai/Mistral-7B-v0.1 \
-    --preset awq_balanced \
-    --output ./artifacts
-
-# Quantize and serve immediately
-python examples/quantize_and_serve.py mistralai/Mistral-7B-v0.1 \
-    --preset awq_balanced \
-    --serve \
-    --port 8000
-```
-
-### 2. Cost Optimization
-
-Automatically test multiple quantization methods and select the best:
-
-```bash
-python examples/optimize_cost.py mistralai/Mistral-7B-v0.1 \
-    --max-ppl-delta 2.0 \
-    --min-compression 4.0 \
-    --calibration \
-    --output ./artifacts/optimized
-```
-
-This will:
-- Generate candidates (GPTQ, AWQ, bitsandbytes variants)
-- Benchmark each on your hardware
-- Select the best method for your constraints
-- Save optimization results in artifact manifest
-
-### 3. Delta Compression for Fine-tunes
+### 1. Delta Compression for Fine-tunes
 
 Store fine-tunes efficiently as deltas from base models:
 
@@ -54,6 +17,16 @@ python examples/delta_compression.py \
 ```
 
 Typical savings: **60-90%** storage reduction for fine-tunes!
+
+### 2. Dataset Delta Compression
+
+Compress derivative datasets as deltas:
+
+```bash
+python examples/dataset_delta_example.py
+```
+
+This demonstrates dataset delta compression with real examples and savings estimates.
 
 ## Available Quantization Presets
 
@@ -87,47 +60,6 @@ size_info = QuantizationWrapper.estimate_size("mistralai/Mistral-7B-v0.1", confi
 print(f"Compression: {size_info['compression_ratio']:.2f}x")
 ```
 
-### HTTP Streaming
-
-```python
-from artifact.http_streaming import HTTPArtifactStreamer
-
-# Stream from CDN
-streamer = HTTPArtifactStreamer("https://cdn.example.com/artifacts/model-123")
-manifest = streamer.load_manifest()
-
-# Get specific chunks
-chunk_data = streamer.get_chunk_by_name("layer.0.weight")
-
-# Stream all chunks
-for chunk_meta, chunk_data in streamer.stream_all_chunks():
-    print(f"Loading {chunk_meta.name}: {chunk_meta.size} bytes")
-```
-
-### vLLM Integration
-
-```python
-from inference.vllm_integration import SparseVLLMLoader
-
-# Create vLLM engine from artifact
-engine = SparseVLLMLoader.create_vllm_engine(
-    artifact_path="./artifacts/mistral-7b",
-    tensor_parallel_size=2,
-    gpu_memory_utilization=0.9,
-)
-
-# Generate
-outputs = engine.generate(["Hello, how are you?"], max_tokens=50)
-print(outputs[0].outputs[0].text)
-
-# Or serve OpenAI-compatible API
-SparseVLLMLoader.serve_with_vllm(
-    artifact_path="./artifacts/mistral-7b",
-    host="0.0.0.0",
-    port=8000,
-)
-```
-
 ### Delta Compression
 
 ```python
@@ -147,61 +79,49 @@ model = reconstruct_from_delta(
 )
 ```
 
-## Artifact Structure
+## Output Structure
 
-After running these examples, you'll have artifacts with this structure:
+After running delta compression, you'll have:
 
 ```
-artifacts/
-├── mistral-7b/
-│   ├── manifest.json          # Sparse metadata
-│   ├── quantization_config.json  # Tool-specific config
-│   └── model_weights/         # Quantized weights
-│       ├── model.safetensors
-│       └── ...
-└── delta/
-    ├── manifest.json          # Includes delta metadata
-    └── deltas/
-        ├── layer.10.bin       # Changed layers only
-        └── layer.11.bin
+artifacts/delta/
+├── delta_manifest.json    # Delta metadata and savings
+└── deltas/                # Changed layers only
+    ├── layer.10.bin
+    └── layer.11.bin
 ```
 
-### Manifest Structure
+### Delta Manifest Example
 
 ```json
 {
-  "version": "1.0",
-  "model_id": "mistralai/Mistral-7B-v0.1",
+  "model_id": "your-org/mistral-7b-finetuned",
+  "base_model_id": "mistralai/Mistral-7B-v0.1",
+  "delta_method": "sparse_int8",
+  "changed_layers": ["layer.10", "layer.11"],
   "quantization": {
     "method": "awq",
-    "bits": 4,
-    "group_size": 256,
-    "zero_point": true
+    "bits": 4
   },
-  "compression_ratio": 7.8,
-  "delta": {
-    "base_model_id": "mistralai/Mistral-7B-v0.1",
-    "changed_layers": ["layer.10", "layer.11"],
-    "savings_pct": 85.0
-  },
-  "optimization": {
-    "selected_method": "awq_balanced",
-    "candidates_tested": ["gptq_quality", "awq_balanced", "bnb_nf4"],
-    "latency_p50_ms": 45.2,
-    "throughput_tps": 120.5
+  "savings": {
+    "base_size_gb": 13.0,
+    "finetuned_size_gb": 13.0,
+    "delta_size_gb": 1.8,
+    "savings_pct": 86.2,
+    "compression_ratio": 7.2
   }
 }
 ```
 
-## What Sparse Adds
+## What Sparse Provides
 
-Sparse **doesn't replace** AutoGPTQ/AutoAWQ/bitsandbytes. It adds:
+Sparse **doesn't replace** AutoGPTQ/AutoAWQ/bitsandbytes. It provides:
 
-1. **Delta Compression** - Efficient fine-tune storage
-2. **Cost Optimizer** - Auto-benchmark and select best method
-3. **Streaming Artifacts** - HTTP-streamable, chunked format
-4. **Inference Integration** - vLLM/TGI helpers
-5. **Enterprise Features** - Signing, verification, monitoring
+1. **Delta Compression** - Store fine-tunes 60-90% smaller as deltas from base models
+2. **Dataset Delta Compression** - Store derivative datasets 70-90% smaller
+3. **Smart Routing** - Auto-route requests to optimal models/hardware
+4. **Cost Optimizer** - Generate and filter quantization candidates
+5. **Unified Quantization API** - Single interface for GPTQ, AWQ, bitsandbytes
 
 ## Installation
 
@@ -219,8 +139,59 @@ pip install vllm          # vLLM inference
 pip install accelerate    # Transformers inference
 ```
 
+## Dataset Delta Compression
+
+See `dataset_delta_example.py` for:
+- Estimating savings for derivative datasets
+- Compressing datasets as deltas
+- Reconstructing datasets from deltas
+- Real-world impact analysis
+
+## Smart Routing & Cost Optimization
+
+Use the Python API to test routing and optimization:
+
+```python
+from optimizer.routing import classify_request_complexity, suggest_optimal_model
+from optimizer import generate_candidates, OptimizationConstraints
+
+# Classify request complexity
+complexity = classify_request_complexity("What is 2+2?", max_tokens=10)
+
+# Get routing recommendation
+decision = suggest_optimal_model(
+    requested_model="meta-llama/Llama-2-70b-hf",
+    prompt="What is 2+2?",
+    quality_threshold=0.85,
+    cost_priority=True
+)
+
+# Generate optimization candidates
+candidates = generate_candidates(
+    include_calibration=False,
+    max_expected_ppl_delta=2.0,
+    min_expected_compression=2.0
+)
+```
+
+## Testing
+
+Run comprehensive tests:
+
+```bash
+# Test with real HuggingFace models
+python tests/test_real_models.py
+
+# Test all individual features
+python tests/test_individual_features.py
+
+# Run all benchmarks
+./benchmarks/run_benchmarks.sh
+```
+
 ## Next Steps
 
-- See [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) for architecture details
-- See [../docs/ROADMAP.md](../docs/ROADMAP.md) for future plans
+- Try the examples with your own models
+- Deploy to HuggingFace Spaces (see `hf_space/DEPLOYMENT.md`)
+- Run the full benchmark suite
 - See [../README.md](../README.md) for full documentation

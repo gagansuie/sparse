@@ -11,7 +11,7 @@ from datetime import datetime
 
 import torch
 
-from .candidates import CompressionCandidate, generate_candidates, CompressionMethod
+from .candidates import CompressionCandidate, generate_candidates, QuantizationMethod
 from .benchmark import BenchmarkResult, benchmark_candidate, estimate_hardware_type
 
 

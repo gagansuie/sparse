@@ -237,11 +237,15 @@ class QuantizationWrapper:
             quantized_size_gb = (num_params * config.bits / 8) / (1024 ** 3)
         
         compression_ratio = original_size_gb / quantized_size_gb if quantized_size_gb > 0 else 1.0
+        savings_gb = original_size_gb - quantized_size_gb
+        savings_pct = (savings_gb / original_size_gb * 100) if original_size_gb > 0 else 0.0
         
         return {
             "original_size_gb": original_size_gb,
             "quantized_size_gb": quantized_size_gb,
             "compression_ratio": compression_ratio,
+            "savings_gb": savings_gb,
+            "savings_pct": savings_pct,
         }
 
 
