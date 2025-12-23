@@ -180,18 +180,26 @@ jobs:
           retention-days: 90
           overwrite: true
       
-      - name: Create private release (only on tags)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Update or create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${{ steps.get_version.outputs.version }}
+          
+          # Delete existing release if it exists
+          gh release delete v$VERSION --yes 2>/dev/null || true
+          
+          # Create new release (always latest for this version)
           gh release create v$VERSION \
-            --title "Sparse v$VERSION - PROPRIETARY" \
+            --title "Sparse v$VERSION - PROPRIETARY (Latest)" \
             --notes "⚠️ PROPRIETARY SOFTWARE - For authorized clients only
           
-          Commit: ${{ github.sha }}
-          Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          **Latest Build:**
+          - Commit: ${{ github.sha }}
+          - Branch: ${{ github.ref_name }}
+          - Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          This release is automatically updated on every commit to maintain the latest v$VERSION build.
           " \
-            --draft \
+            --prerelease \
             deliverables/sparse-*.tar.gz*
