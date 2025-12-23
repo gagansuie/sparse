@@ -120,12 +120,15 @@ def classify_request_complexity(
     prompt_tokens = len(prompt.split())
     total_tokens = prompt_tokens + max_tokens + context_length
     
-    # Simple heuristics
-    if total_tokens < 100 and max_tokens < 50:
+    # Simple heuristics - prioritize simplicity for small prompts
+    # Check prompt and output size first for quick classification
+    if prompt_tokens <= 10 and max_tokens <= 20:
         return TaskComplexity.SIMPLE
-    elif total_tokens < 500 and max_tokens < 200:
+    elif total_tokens < 50 and max_tokens < 30:
+        return TaskComplexity.SIMPLE
+    elif total_tokens < 150:
         return TaskComplexity.MODERATE
-    elif total_tokens < 2000:
+    elif total_tokens < 1000:
         return TaskComplexity.COMPLEX
     else:
         return TaskComplexity.EXTREME
@@ -397,5 +400,6 @@ def estimate_routing_savings(
         "optimization_rate": optimization_rate,
         "avg_savings_per_request": avg_savings_per_optimized,
         "annual_savings_usd": annual_savings,
+        "monthly_savings_usd": annual_savings / 12,
         "savings_pct": (annual_savings / current_annual_cost) * 100
     }

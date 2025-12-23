@@ -12,7 +12,6 @@ import json
 
 from core import compress_delta, estimate_delta_savings, DeltaManifest
 from core import QuantizationWrapper, QUANTIZATION_PRESETS
-from artifact.format import ArtifactManifest
 
 
 def main():
@@ -64,33 +63,33 @@ def main():
         )
         print(f"✓ Base model quantized with {config.method}")
     
-    # Step 4: Create Sparse artifact
+    # Step 4: Save delta manifest
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    manifest = ArtifactManifest(
-        model_id=args.fine_tuned_model,
-        quantization={
-            "method": config.method if config else "none",
+    manifest_data = {
+        "model_id": args.fine_tuned_model,
+        "base_model_id": args.base_model,
+        "delta_method": delta_manifest.delta_method,
+        "changed_layers": delta_manifest.changed_layers,
+        "quantization": {
+            "method": config.method.value if config else "none",
             "bits": config.bits if config else 16,
         },
-        delta={
-            "base_model_id": args.base_model,
-            "delta_method": delta_manifest.delta_method,
-            "changed_layers": delta_manifest.changed_layers,
+        "savings": {
+            "base_size_gb": savings["base_size_gb"],
+            "finetuned_size_gb": savings["finetuned_size_gb"],
             "delta_size_gb": savings["delta_size_gb"],
             "savings_pct": savings["savings_pct"],
-        },
-        compression_ratio=savings["finetuned_size_gb"] / savings["delta_size_gb"],
-        original_size_bytes=int(savings["finetuned_size_gb"] * 1024**3),
-        compressed_size_bytes=int(savings["delta_size_gb"] * 1024**3),
-    )
+            "compression_ratio": savings["finetuned_size_gb"] / savings["delta_size_gb"],
+        }
+    }
     
-    manifest_path = output_dir / "manifest.json"
+    manifest_path = output_dir / "delta_manifest.json"
     with open(manifest_path, "w") as f:
-        json.dump(manifest.to_dict(), f, indent=2)
+        json.dump(manifest_data, f, indent=2)
     
-    print(f"\n✓ Delta artifact created: {output_dir}")
+    print(f"\n✓ Delta saved to: {output_dir}")
     print(f"   Manifest: {manifest_path}")
     
     print(f"\n💡 To load this fine-tune:")

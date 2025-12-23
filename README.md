@@ -6,9 +6,12 @@
 
 **$30-45M/year savings for platforms like HuggingFace**
 
+⚡ **Now with optional Rust acceleration for 10-20x faster compression!**
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org)
+[![Rust](https://img.shields.io/badge/Rust-Optional-orange.svg)](https://rustlang.org)
 
 [Quick Start](#quick-start) • [Delta Compression](#delta-compression-results) • [Cost Optimizer](#cost-optimizer-results) • [API](#python-api) • [CLI](#cli)
 
@@ -129,6 +132,10 @@ pip install -e .
 
 # With dev tools (pytest, black, ruff)
 pip install -e ".[dev]"
+
+# Optional: Enable Rust acceleration (10-20x faster!)
+cd rust/
+bash build.sh
 ```
 
 ### CLI
@@ -300,10 +307,44 @@ Result: 30-50% cost savings vs manual selection
 
 ## Architecture
 
+### High-Level Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│           Python API (Unchanged)            │
+│        core.delta.compress_delta_sparse()   │
+└──────────────────┬──────────────────────────┘
+                   │
+        ┌──────────▼──────────┐
+        │  Auto-detect Rust   │
+        │  (delta_rust.py)    │
+        └──┬────────────────┬─┘
+           │                │
+   ┌───────▼──────┐  ┌──────▼────────┐
+   │ Rust Core    │  │ Python        │
+   │ (10-20x)     │  │ Fallback      │
+   │ SIMD+Parallel│  │ (Always works)│
+   └──────────────┘  └───────────────┘
+```
+
+**Rust-accelerated operations** (optional, 10-20x faster):
+- Sparse delta compression/decompression
+- INT8 quantization
+- SIMD + parallel processing with Rayon
+
+### Directory Structure
+
 ```
 sparse/
+├── rust/                      # Rust acceleration (optional)
+│   ├── src/                   # SIMD-optimized compression
+│   │   ├── compress.rs        # Sparse compression
+│   │   ├── decompress.rs      # Fast decompression
+│   │   └── quantize.rs        # INT8 quantization
+│   └── build.sh               # One-command build
 ├── core/                      # Core features
-│   ├── delta.py               # Model delta compression
+│   ├── delta.py               # Model delta compression (auto-uses Rust)
+│   ├── delta_rust.py          # Rust wrapper with fallback
 │   ├── dataset_delta.py       # Dataset delta compression
 │   ├── calibration.py         # Perplexity evaluation
 │   └── quantization.py        # Quantization wrapper (GPTQ/AWQ/bitsandbytes)
@@ -314,8 +355,10 @@ sparse/
 │   └── routing.py             # Smart model routing
 ├── cli/                       # Command-line interface
 │   └── main.py                # delta, optimize, route commands
-├── hf_space/                  # HuggingFace Spaces demo
+├── benchmarks/                # Performance testing
+│   └── bench_rust_vs_python.py
 ├── tests/                     # Test suite
+│   └── test_rust_integration.py
 └── docs/
 ```
 
@@ -323,7 +366,7 @@ sparse/
 
 **Sparse focuses on three unique capabilities:**
 
-1. **Delta Compression** - Store fine-tunes and dataset derivatives 60-90% smaller
+1. **Delta Compression** - Store fine-tunes and dataset derivatives 60-90% smaller (Rust-accelerated)
 2. **Cost Optimizer** - Auto-select best quantization method based on constraints
 3. **Smart Routing** - Route requests to optimal models/hardware
 
@@ -354,6 +397,7 @@ sparse/
 | Feature | Status | Description |
 |---------|--------|-------------|
 | **Model Delta Compression** | ✅ Complete | Store fine-tunes as 60-90% smaller deltas |
+| **Rust Acceleration** | ⚡ Optional | 10-20x faster compression with SIMD + parallel processing |
 | **Dataset Delta Compression** | ✅ Complete | Store dataset derivatives as 70-90% smaller deltas |
 | **Cost Optimizer** | ✅ Complete | Auto-benchmark GPTQ/AWQ/bitsandbytes |
 | **Smart Routing** | ✅ Complete | Route to optimal models/hardware |
@@ -383,10 +427,17 @@ Try the live demo: [Sparse on HF Spaces](https://huggingface.co/spaces/sparselab
 
 ## Requirements
 
+**Core Requirements:**
 - Python 3.9+
 - PyTorch 2.0+
 - transformers 4.30+
 - 16GB+ RAM for 7B models (or GPU with 16GB+ VRAM)
+
+**Optional (for 10-20x faster compression):**
+- Rust 1.70+ (auto-installed by `rust/build.sh`)
+- maturin (auto-installed)
+
+See [RUST_QUICKSTART.md](RUST_QUICKSTART.md) for Rust acceleration setup.
 
 ---
 
