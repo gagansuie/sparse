@@ -161,9 +161,9 @@ jobs:
           cp -r cli sparse-v$VERSION/
           cp -r rust sparse-v$VERSION/
           cp -r dist sparse-v$VERSION/
+          cp -r docs sparse-v$VERSION/
           cp pyproject.toml sparse-v$VERSION/
           cp README.md sparse-v$VERSION/
-          cp RUST_QUICKSTART.md sparse-v$VERSION/
           cp LICENSE sparse-v$VERSION/
           cp requirements.txt sparse-v$VERSION/
           

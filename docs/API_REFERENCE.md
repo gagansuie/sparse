@@ -599,7 +599,7 @@ else:
 
 **No code changes needed** - your existing API calls automatically use Rust when available.
 
-See [RUST_QUICKSTART.md](../RUST_QUICKSTART.md) for installation details.
+To install Rust acceleration: `cd rust/ && bash build.sh`
 
 ---
 
