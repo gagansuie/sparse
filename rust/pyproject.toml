@@ -13,5 +13,4 @@ classifiers = [
 ]
 
 [tool.maturin]
-python-source = "python"
 module-name = "sparse_core"
