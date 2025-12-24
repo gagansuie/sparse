@@ -598,7 +598,7 @@ maturin develop --release
 1. **Read `docs/API_REFERENCE.md`** - Full API documentation (includes Rust performance notes)
 2. **Review `examples/`** - Working examples
 3. **Run `tests/`** - Verify installation
-4. **Optional: Install Rust acceleration** - See `RUST_QUICKSTART.md` for 10-20x speedup
+4. **Optional: Install Rust acceleration** - Run `cd rust/ && bash build.sh` for 10-20x speedup
 5. **Benchmark performance** - Run `benchmarks/bench_rust_vs_python.py`
 6. **Schedule integration kickoff** - Plan deployment timeline
 

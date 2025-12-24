@@ -8,7 +8,7 @@
 
 ⚡ **Now with optional Rust acceleration for 10-20x faster compression!**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org)
 [![Rust](https://img.shields.io/badge/Rust-Optional-orange.svg)](https://rustlang.org)
@@ -419,28 +419,61 @@ Future enhancements:
 
 ---
 
-## HuggingFace Space
-
-Try the live demo: [Sparse on HF Spaces](https://huggingface.co/spaces/sparselabs/sparse-demo)
-
----
-
 ## Requirements
 
 **Core Requirements:**
 - Python 3.9+
 - PyTorch 2.0+
 - transformers 4.30+
+- datasets 2.10+
 - 16GB+ RAM for 7B models (or GPU with 16GB+ VRAM)
 
-**Optional (for 10-20x faster compression):**
-- Rust 1.70+ (auto-installed by `rust/build.sh`)
-- maturin (auto-installed)
+**Optional Dependencies:**
 
-See [RUST_QUICKSTART.md](RUST_QUICKSTART.md) for Rust acceleration setup.
+For quantization (choose one or more):
+```bash
+pip install auto-gptq      # GPTQ quantization (CUDA required)
+pip install autoawq        # AWQ quantization (CUDA required)
+pip install bitsandbytes   # NF4/INT8 quantization
+```
+
+For Rust acceleration (10-20x faster compression):
+```bash
+cd rust/
+bash build.sh  # Auto-installs Rust + maturin, builds extension
+```
+
+See [docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md) for detailed setup, troubleshooting, and performance benchmarks.
+
+---
+
+## Testing
+
+Run the full test suite:
+
+```bash
+# Quick smoke tests
+python scripts/test_ci.py
+
+# Individual feature tests
+pytest tests/test_individual_features.py -v
+
+# All benchmarks
+./benchmarks/run_benchmarks.sh
+```
+
+---
+
+## Documentation
+
+- **[examples/](examples/)** - Working code examples
+- **[docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md)** - HuggingFace integration & Rust setup
+- **[hf_space/](hf_space/)** - HuggingFace Space deployment files
 
 ---
 
 ## License
 
-MIT
+**Proprietary Software** - This is commercial software licensed under a proprietary license.
+
+See [LICENSE](LICENSE) for full terms. Contact gagan.suie@sparselabs.ai for licensing inquiries.

@@ -77,4 +77,5 @@ Try these models:
 
 ## License
 
-MIT License - See LICENSE file for details
+**Demo Only** - This Space demonstrates proprietary software capabilities.  
+Full software is licensed under a proprietary license. Contact gagan.suie@sparselabs.ai for licensing.
