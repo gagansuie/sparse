@@ -84,7 +84,7 @@ jobs:
         run: |
           source .venv/bin/activate
           pip install --no-deps -e .
-          pip install pytest numpy torch
+          pip install pytest numpy torch tqdm transformers datasets
       
       - name: Test Rust integration
         run: |
