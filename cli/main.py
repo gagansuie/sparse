@@ -421,8 +421,8 @@ def cmd_deploy(args):
     print(f"  Output dir:         {output_dir}")
     print(f"  Recipe:             {recipe_path}")
     print(f"  Results:            {results_path}")
-    if recipe.get("artifacts", {}).get("tnpk"):
-        print(f"  Artifact:           {output_dir / recipe['artifacts']['tnpk']['path']}")
+    if recipe.get("artifacts", {}).get("sparse"):
+        print(f"  Artifact:           {output_dir / recipe['artifacts']['sparse']['path']}")
     print("=" * 70)
 
     if result.winner:
