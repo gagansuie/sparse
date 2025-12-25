@@ -1,59 +1,48 @@
-name: Deploy Public Demo to HF Space
+name: Deploy Testing Space to HF (TEMPORARY)
 
-# IMPORTANT: This deploys DEMO ONLY (no proprietary source code)
-# Demo uses mock data to showcase features without exposing IP
+# TESTING ONLY: Deploy full source code to HF for validation
+# ⚠️ WILL BE DELETED AFTER TESTING ⚠️
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'hf_space/**'
-  workflow_dispatch:
+  workflow_dispatch:  # Manual trigger only
 
 jobs:
   deploy:
-    name: Deploy to Hugging Face Space
+    name: Deploy Full Testing Space
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       
-      - name: Prepare HF Space directory (DEMO ONLY)
+      - name: Prepare HF Space directory with ALL source code
         run: |
-          # Create temp directory for the space
           mkdir -p /tmp/hf-space
           
-          # IMPORTANT: Only copy demo app (uses MOCK DATA)
-          # NO proprietary source code is deployed publicly
+          # Copy HF Space files
           cp hf_space/app.py /tmp/hf-space/
           cp hf_space/README.md /tmp/hf-space/
           cp hf_space/requirements.txt /tmp/hf-space/
+          cp hf_space/.space.yaml /tmp/hf-space/
+          cp hf_space/packages.txt /tmp/hf-space/
+          cp hf_space/setup.sh /tmp/hf-space/
+          chmod +x /tmp/hf-space/setup.sh
           
-          # Add disclaimer to README
-          cat >> /tmp/hf-space/README.md << 'EOF'
+          # Copy ALL source code (needed for testing)
+          cp -r core /tmp/hf-space/
+          cp -r optimizer /tmp/hf-space/
+          cp -r rust /tmp/hf-space/
           
-          ---
+          # Copy config files
+          cp pyproject.toml /tmp/hf-space/
+          cp requirements.txt /tmp/hf-space/requirements-base.txt
           
-          ## ⚠️ Demo Only
-          
-          This is a **demonstration** using mock data to showcase Sparse's capabilities.
-          
-          The actual Sparse library is **proprietary software** and not publicly available.
-          
-          **For licensing inquiries:**
-          - **Sparse Labs**
-          - **Email:** gagan.suie@sparselabs.ai
-          - **Website:** https://sparselabs.ai
-          EOF
-          
-          # Add watermark to app
-          sed -i '1i# DEMO VERSION - Proprietary software not included\n' /tmp/hf-space/app.py
+          echo "✅ All source code copied for testing"
       
       - name: Push to HuggingFace Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE_ID: gagansuie/sparse-demo
+          HF_SPACE_ID: gagansuie/sparse-validation-test
         run: |
           cd /tmp/hf-space
           
@@ -63,6 +52,15 @@ jobs:
           git init
           git checkout -b main
           git add .
-          git commit -m "Deploy Sparse demo (public version) from GitHub Actions"
+          git commit -m "Deploy Sparse validation testing (TEMPORARY - will be deleted)"
           
           git push --force https://user:$HF_TOKEN@huggingface.co/spaces/$HF_SPACE_ID main
+          
+          echo ""
+          echo "=========================================="
+          echo "✅ DEPLOYED TO HF SPACES FOR TESTING"
+          echo "=========================================="
+          echo "Space URL: https://huggingface.co/spaces/$HF_SPACE_ID"
+          echo ""
+          echo "⚠️  REMEMBER TO DELETE AFTER TESTING ⚠️"
+          echo "=========================================="
