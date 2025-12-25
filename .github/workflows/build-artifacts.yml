@@ -50,6 +50,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - name: Free up disk space (Ubuntu only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          df -h
+      
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -113,10 +122,23 @@ jobs:
       - name: Install build tools
         run: pip install build twine
       
-      - name: Build package
+      - name: Build Python package
         run: python -m build
       
-      - name: Check package
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      
+      - name: Build Rust extension wheel
+        run: |
+          pip install maturin
+          cd rust/
+          maturin build --release
+          cp target/wheels/*.whl ../dist/
+      
+      - name: Check packages
         run: twine check dist/*
       
       - name: Upload artifacts
@@ -204,8 +226,19 @@ jobs:
           
           ### Contents
           - Python library source code (core/, optimizer/, cli/)
-          - Pre-built wheel for easy installation
+          - Rust acceleration source (rust/)
+          - Pre-built wheels (Python + Rust)
           - Configuration and dependencies
+          
+          ### Installation Options
+          \`\`\`bash
+          # Option 1: Python only (works everywhere)
+          pip install dist/sparse-*.whl
+          
+          # Option 2: With Rust acceleration (10-20x faster)
+          pip install dist/sparse-*.whl
+          pip install dist/sparse_core-*.whl
+          \`\`\`
           
           ### Build Info
           - **Commit:** ${{ github.sha }}
