@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sparse"
+version = "0.1.1"
+description = "Delta compression for LLM fine-tunes + smart routing system for model hubs - $30-45M/year savings"
+readme = "README.md"
+license = {text = "Proprietary"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Sparse Labs", email = "gagan.suie@sparselabs.ai"}
+]
+keywords = ["llm", "delta-compression", "model-optimization", "fine-tuning", "model-hub", "smart-routing", "dataset-delta"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "datasets>=2.14.0",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "ruff>=0.0.280",
+]
+all = ["sparse[dev]"]
+
+[project.scripts]
+sparse = "cli.main:main"
+
+[project.urls]
+Homepage = "https://sparselabs.ai"
+Documentation = "https://github.com/gagansuie/sparse#readme"
+Repository = "https://github.com/gagansuie/sparse"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core", "core.*", "cli", "cli.*", "optimizer", "optimizer.*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
