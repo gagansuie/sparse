@@ -26,7 +26,7 @@ def cmd_pack(args):
         output_path = args.output
     else:
         model_name = args.model_id.replace("/", "_")
-        output_path = f"sparse_{model_name}_{args.preset}.tnpk"
+        output_path = f"sparse_{model_name}_{args.preset}.sparse"
     
     try:
         # Step 1: Quantize using wrapper
@@ -386,7 +386,7 @@ def cmd_deploy(args):
         try:
             from artifact import create_artifact
 
-            artifact_path = output_dir / "artifact.tnpk"
+            artifact_path = output_dir / "artifact.sparse"
 
             def artifact_progress_callback(msg, progress):
                 bar_width = 30
@@ -403,12 +403,12 @@ def cmd_deploy(args):
                 progress_callback=artifact_progress_callback,
             )
 
-            recipe["artifacts"]["tnpk"] = {
-                "path": "artifact.tnpk",
+            recipe["artifacts"]["sparse"] = {
+                "path": "artifact.sparse",
                 "codec": args.artifact_codec,
             }
         except Exception as e:
-            print(f"[WARN] Failed to create .tnpk artifact: {e}")
+            print(f"[WARN] Failed to create .sparse artifact: {e}")
 
     recipe_path = output_dir / "recipe.json"
     with open(recipe_path, "w") as f:
@@ -570,7 +570,7 @@ def cmd_artifact(args):
 
 
 def cmd_artifact_create(args):
-    """Create .tnpk artifact from quantized model."""
+    """Create .sparse artifact from quantized model."""
     from artifact import create_artifact
     from core import QuantizationWrapper
     
@@ -1056,12 +1056,12 @@ def main():
     deploy_parser.add_argument(
         "--with-artifact",
         action="store_true",
-        help="Also create a .tnpk artifact in the package"
+        help="Also create a .sparse artifact in the package"
     )
     deploy_parser.add_argument(
         "--artifact-preset",
         default="awq_balanced",
-        help="Quantization preset to use when creating a .tnpk artifact (default: awq_balanced)"
+        help="Quantization preset to use when creating a .sparse artifact (default: awq_balanced)"
     )
 
     # native command
@@ -1106,16 +1106,16 @@ def main():
     delta_estimate.add_argument("finetune_model", help="Fine-tuned model HuggingFace ID or path")
     
     # artifact command
-    artifact_parser = subparsers.add_parser("artifact", help="Streamable artifact format (.tnpk)")
+    artifact_parser = subparsers.add_parser("artifact", help="Streamable artifact format (.sparse)")
     artifact_subparsers = artifact_parser.add_subparsers(dest="artifact_command", help="Artifact subcommands")
     
     # artifact create
-    artifact_create = artifact_subparsers.add_parser("create", help="Create .tnpk artifact from model")
+    artifact_create = artifact_subparsers.add_parser("create", help="Create .sparse artifact from model")
     artifact_create.add_argument("model_id", help="HuggingFace model ID")
     artifact_create.add_argument(
         "--output", "-o",
         required=True,
-        help="Output path for .tnpk artifact"
+        help="Output path for .sparse artifact"
     )
     artifact_create.add_argument(
         "--preset",
@@ -1125,15 +1125,15 @@ def main():
     
     # artifact info
     artifact_info = artifact_subparsers.add_parser("info", help="Show artifact info")
-    artifact_info.add_argument("artifact_path", help="Path to .tnpk artifact")
+    artifact_info.add_argument("artifact_path", help="Path to .sparse artifact")
     
     # artifact verify
     artifact_verify = artifact_subparsers.add_parser("verify", help="Verify artifact integrity")
-    artifact_verify.add_argument("artifact_path", help="Path to .tnpk artifact")
+    artifact_verify.add_argument("artifact_path", help="Path to .sparse artifact")
     
     # artifact sign
     artifact_sign = artifact_subparsers.add_parser("sign", help="Sign artifact")
-    artifact_sign.add_argument("artifact_path", help="Path to .tnpk artifact")
+    artifact_sign.add_argument("artifact_path", help="Path to .sparse artifact")
     artifact_sign.add_argument("--signer", required=True, help="Signer identity")
     artifact_sign.add_argument("--key", help="Secret key for HMAC signing")
     
