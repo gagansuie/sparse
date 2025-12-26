@@ -1,3 +1,14 @@
+---
+title: Sparse Validation Test
+emoji: 🚀
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: 4.44.0
+app_file: app.py
+pinned: false
+---
+
 # Sparse - Full Feature Validation (TEMPORARY)
 
 ⚠️ **THIS SPACE WILL BE DELETED AFTER TESTING** ⚠️

@@ -1,3 +1,2 @@
-# System packages for building Rust extension
 curl
 build-essential
