@@ -283,9 +283,8 @@ with gr.Blocks(title="Sparse - Full Feature Testing", theme=gr.themes.Soft()) as
         delta_btn.click(
             test_delta_compression,
             inputs=[delta_base, delta_finetune, delta_threshold],
-            outputs=delta_output,
-            api_name="delta_compression"
-        ).then(lambda: None, None, None)  # Keeps connection alive
+            outputs=delta_output
+        )
     
     # Tab 2: Quantization
     with gr.Tab("🎯 Quantization"):
@@ -393,4 +392,4 @@ with gr.Blocks(title="Sparse - Full Feature Testing", theme=gr.themes.Soft()) as
     """)
 
 if __name__ == "__main__":
-    demo.queue(default_concurrency_limit=1).launch()
+    demo.launch()
