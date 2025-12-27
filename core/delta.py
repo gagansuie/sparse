@@ -611,7 +611,12 @@ def estimate_delta_savings(
         base_weight = base_params[name].data
         finetune_weight = finetune_params[name].data
         
-        delta, stats = compute_layer_delta(base_weight, finetune_weight)
+        # Use relative threshold based on weight magnitude for better accuracy
+        # Fine-tuning typically changes weights by 0.1-1% of their magnitude
+        weight_scale = torch.abs(base_weight).mean().item()
+        relative_threshold = max(weight_scale * 0.01, 1e-4)  # 1% of weight scale or 1e-4 minimum
+        
+        delta, stats = compute_layer_delta(base_weight, finetune_weight, threshold=relative_threshold)
         total_sparsity += stats["sparsity"]
         total_l2_norm += stats["l2_norm"]
     
