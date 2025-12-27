@@ -4,3 +4,6 @@ datasets>=2.14.0
 gradio>=4.0.0
 numpy>=1.24.0
 tqdm>=4.65.0
+huggingface_hub>=0.20.0
+accelerate>=0.25.0
+bitsandbytes>=0.41.0

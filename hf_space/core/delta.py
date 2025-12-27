@@ -571,61 +571,165 @@ def reconstruct_from_delta(
 def estimate_delta_savings(
     base_model_id: str,
     finetune_model_id: str,
-    sample_layers: int = 10,
+    sample_layers: int = 2,  # Minimal for 70B speed
 ) -> Dict[str, float]:
-    """Estimate storage savings without full compression.
+    """Estimate storage savings with multi-strategy delta compression.
     
-    Quick analysis by sampling a few layers.
+    Strategies:
+    1. Sparse compression: Best when most weights unchanged (LoRA, light fine-tuning)
+    2. Int8 quantization: Guaranteed 50% when weights change (full SFT/RLHF)
+    3. Sparse + Int8: Best of both worlds
     
     Returns:
-        Dict with estimated compression ratio and statistics
+        Dict with compression ratio, speedup, and statistics
     """
+    import gc
+    import time
     from transformers import AutoModelForCausalLM
+    from core.delta_rust import is_rust_available
     
-    # Load models
+    rust_available = is_rust_available()
+    print(f"[Delta] Rust acceleration: {'✅ Available' if rust_available else '❌ Not available'}")
+    
+    # STEP 1: Load base model in fp16 with CPU offload for large models
+    print(f"[Delta] Loading base model: {base_model_id} (fp16 with CPU offload)")
+    load_start = time.time()
+    
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_id,
         torch_dtype=torch.float16,
-        device_map="cpu",
+        device_map="auto",
         low_cpu_mem_usage=True,
+        offload_folder="/tmp/offload",
     )
+    
+    # Get parameter names and select samples (focus on large layers)
+    all_params = dict(base_model.named_parameters())
+    param_names = [n for n in all_params.keys() if 'weight' in n and all_params[n].numel() > 1000000]
+    sample_names = param_names[::max(1, len(param_names) // sample_layers)][:sample_layers]
+    
+    # Extract and store sampled base weights on CPU
+    base_weights = {}
+    for name in sample_names:
+        base_weights[name] = all_params[name].data.cpu().clone()
+    
+    # Free base model memory
+    del base_model, all_params
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    load_time = time.time() - load_start
+    print(f"[Delta] Base model done in {load_time:.1f}s, extracted {len(base_weights)} layers")
+    
+    # STEP 2: Load finetune model in fp16 with CPU offload
+    print(f"[Delta] Loading finetune model: {finetune_model_id} (fp16 with CPU offload)")
+    load_start = time.time()
     
     finetune_model = AutoModelForCausalLM.from_pretrained(
         finetune_model_id,
         torch_dtype=torch.float16,
-        device_map="cpu",
+        device_map="auto",
         low_cpu_mem_usage=True,
+        offload_folder="/tmp/offload",
     )
+    load_time2 = time.time() - load_start
+    print(f"[Delta] Finetune model done in {load_time2:.1f}s")
     
-    base_params = dict(base_model.named_parameters())
+    # Track metrics for different strategies
+    total_original_bytes = 0
+    total_sparse_bytes = 0
+    total_int8_bytes = 0
+    total_sparse_int8_bytes = 0
+    total_sparsity = 0
+    compression_time = 0
+    
     finetune_params = dict(finetune_model.named_parameters())
     
-    # Sample layers
-    param_names = list(base_params.keys())
-    sample_names = param_names[::len(param_names) // sample_layers][:sample_layers]
-    
-    total_sparsity = 0
-    total_l2_norm = 0
-    
     for name in sample_names:
-        base_weight = base_params[name].data
-        finetune_weight = finetune_params[name].data
+        base_weight = base_weights[name]
+        finetune_weight = finetune_params[name].data.cpu()
         
-        delta, stats = compute_layer_delta(base_weight, finetune_weight)
-        total_sparsity += stats["sparsity"]
-        total_l2_norm += stats["l2_norm"]
+        # Compute delta
+        delta = finetune_weight - base_weight
+        delta_abs = torch.abs(delta)
+        
+        # Analyze delta distribution
+        weight_scale = torch.abs(base_weight).mean().item()
+        delta_mean = delta_abs.mean().item()
+        delta_max = delta_abs.max().item()
+        
+        # Use relative threshold: values < 0.1% of max delta are considered zero
+        # This adapts to the actual delta distribution
+        threshold = max(delta_max * 0.001, 1e-7)
+        
+        # Calculate sparsity (% of near-zero deltas)
+        sparsity = (delta_abs < threshold).float().mean().item()
+        total_sparsity += sparsity
+        
+        print(f"[Delta] Layer {name}:")
+        print(f"  weight_scale={weight_scale:.6f}, delta_mean={delta_mean:.6f}, delta_max={delta_max:.4f}")
+        print(f"  threshold={threshold:.2e}, sparsity={sparsity:.1%}")
+        
+        # Original size (fp16)
+        original_bytes = delta.numel() * 2
+        total_original_bytes += original_bytes
+        
+        # Strategy 1: Sparse compression (indices + values for non-zero)
+        compress_start = time.time()
+        non_zero_count = int((1 - sparsity) * delta.numel())
+        sparse_bytes = non_zero_count * 4 + non_zero_count * 2  # int32 indices + fp16 values
+        total_sparse_bytes += sparse_bytes
+        
+        # Strategy 2: Int8 quantization (all deltas quantized to 1 byte + scale)
+        int8_bytes = delta.numel() * 1 + 4  # int8 values + float32 scale
+        total_int8_bytes += int8_bytes
+        
+        # Strategy 3: Sparse + Int8 (sparse indices + int8 values)
+        sparse_int8_bytes = non_zero_count * 4 + non_zero_count * 1 + 4  # int32 indices + int8 values + scale
+        total_sparse_int8_bytes += sparse_int8_bytes
+        
+        compression_time += time.time() - compress_start
+        
+        print(f"  Compression options: sparse={original_bytes/max(sparse_bytes,1):.2f}x, int8={original_bytes/int8_bytes:.2f}x, sparse+int8={original_bytes/max(sparse_int8_bytes,1):.2f}x")
     
     avg_sparsity = total_sparsity / len(sample_names)
     
-    # Estimate compression ratio based on sparsity
-    # Sparse: ~sparsity * original_size reduction
-    # INT8: 2x reduction
-    estimated_compression = 1 / (1 - avg_sparsity * 0.8)  # Conservative estimate
+    # Calculate compression ratios for each strategy
+    sparse_ratio = total_original_bytes / max(total_sparse_bytes, 1)
+    int8_ratio = total_original_bytes / max(total_int8_bytes, 1)
+    sparse_int8_ratio = total_original_bytes / max(total_sparse_int8_bytes, 1)
     
-    del base_model, finetune_model
+    # Choose best strategy
+    best_ratio = max(sparse_ratio, int8_ratio, sparse_int8_ratio)
+    if best_ratio == sparse_ratio:
+        best_strategy = "sparse"
+    elif best_ratio == int8_ratio:
+        best_strategy = "int8"
+    else:
+        best_strategy = "sparse+int8"
+    
+    # Cleanup
+    del finetune_model, base_weights, finetune_params
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    print(f"\n[Delta] Results:")
+    print(f"  Sparsity: {avg_sparsity:.1%}")
+    print(f"  Sparse compression: {sparse_ratio:.2f}x")
+    print(f"  Int8 compression: {int8_ratio:.2f}x") 
+    print(f"  Sparse+Int8 compression: {sparse_int8_ratio:.2f}x")
+    print(f"  Best strategy: {best_strategy} ({best_ratio:.2f}x)")
     
     return {
-        "estimated_compression": estimated_compression,
+        "estimated_compression": best_ratio,
+        "best_strategy": best_strategy,
+        "sparse_compression": sparse_ratio,
+        "int8_compression": int8_ratio,
+        "sparse_int8_compression": sparse_int8_ratio,
         "avg_sparsity": avg_sparsity,
         "sample_layers": len(sample_names),
+        "rust_acceleration": rust_available,
+        "compression_time_s": compression_time,
+        "model_load_time_s": load_time + load_time2,
     }

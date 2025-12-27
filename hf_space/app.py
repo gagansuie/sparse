@@ -9,9 +9,16 @@ Tests all features on HuggingFace infrastructure with 7B/70B models.
 import gradio as gr
 import torch
 import sys
+import os
 from pathlib import Path
 from typing import Dict, Any
 import time
+from huggingface_hub import login
+
+# Login with HF token for gated model access
+if os.environ.get("HF_TOKEN"):
+    login(token=os.environ["HF_TOKEN"])
+    print("✅ Logged in to HuggingFace for gated model access")
 
 # Add project to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -26,28 +33,59 @@ from optimizer import generate_candidates, OptimizationConstraints
 # FEATURE 1: DELTA COMPRESSION (PRIMARY VALUE PROP)
 # ==============================================================================
 
-def test_delta_compression(base_model: str, threshold: float) -> Dict[str, Any]:
-    """Test delta compression estimation and algorithm."""
+def test_delta_compression(base_model: str, finetune_model: str, threshold: float) -> Dict[str, Any]:
+    """Test delta compression estimation with multi-strategy approach."""
     try:
-        # Estimate savings
+        # Estimate savings between base and fine-tuned model
         start = time.time()
-        savings = estimate_delta_savings(base_model, base_model)
+        result = estimate_delta_savings(base_model, finetune_model)
         estimate_time = time.time() - start
+        
+        # Extract values from result
+        best_ratio = result.get('estimated_compression', 1.0)
+        best_strategy = result.get('best_strategy', 'unknown')
+        avg_sparsity = result.get('avg_sparsity', 0.0)
+        
+        # Estimate model size (7B model ~14GB in fp16)
+        if '70b' in base_model.lower():
+            original_size_gb = 140.0
+        elif '13b' in base_model.lower():
+            original_size_gb = 26.0
+        elif '7b' in base_model.lower():
+            original_size_gb = 14.0
+        else:
+            original_size_gb = 1.0
+        
+        # Calculate delta size based on compression
+        delta_size_gb = original_size_gb / best_ratio if best_ratio > 0 else original_size_gb
+        savings_pct = (1 - 1/best_ratio) * 100 if best_ratio > 1 else 0
         
         return {
             "status": "✅ Success",
             "base_model": base_model,
-            "original_size_gb": f"{savings.get('original_size_gb', 0):.2f} GB",
-            "delta_size_gb": f"{savings.get('delta_size_gb', 0):.2f} GB",
-            "compression_ratio": f"{savings.get('compression_ratio', 0):.2f}x",
-            "savings_pct": f"{savings.get('savings_pct', 0):.1f}%",
+            "finetune_model": finetune_model,
+            "original_size_gb": f"{original_size_gb:.2f} GB",
+            "delta_size_gb": f"{delta_size_gb:.2f} GB",
+            "best_strategy": best_strategy,
+            "compression_ratio": f"{best_ratio:.2f}x",
+            "savings_pct": f"{savings_pct:.1f}%",
+            "compression_breakdown": {
+                "sparse": f"{result.get('sparse_compression', 0):.2f}x",
+                "int8": f"{result.get('int8_compression', 0):.2f}x",
+                "sparse+int8": f"{result.get('sparse_int8_compression', 0):.2f}x",
+            },
+            "avg_sparsity": f"{avg_sparsity*100:.1f}%",
+            "sample_layers": result.get('sample_layers', 0),
             "estimate_time_s": f"{estimate_time:.2f}s",
             "rust_acceleration": "✅ Available" if is_rust_available() else "⚠️ Python fallback",
         }
     except Exception as e:
+        import traceback
         return {
             "status": f"❌ Error: {str(e)}",
             "base_model": base_model,
+            "finetune_model": finetune_model,
+            "traceback": traceback.format_exc()[-500:],
         }
 
 # ==============================================================================
@@ -60,10 +98,13 @@ def test_quantization(model_id: str, preset: str) -> Dict[str, Any]:
         config = QUANTIZATION_PRESETS[preset]
         size_info = QuantizationWrapper.estimate_size(model_id, config)
         
+        # Handle method as string or enum
+        method_name = config.method.value if hasattr(config.method, 'value') else config.method
+        
         return {
             "status": "✅ Success",
             "model": model_id,
-            "method": f"{config.method.value} {config.bits}-bit",
+            "method": f"{method_name} {config.bits}-bit",
             "original_size_gb": f"{size_info['original_size_gb']:.2f} GB",
             "quantized_size_gb": f"{size_info['quantized_size_gb']:.2f} GB",
             "compression_ratio": f"{size_info['compression_ratio']:.2f}x",
@@ -182,16 +223,43 @@ with gr.Blocks(title="Sparse - Full Feature Testing", theme=gr.themes.Soft()) as
     
     rust_btn.click(test_rust_info, outputs=rust_output)
     
+    # Model pairs for delta compression testing
+    # Note: RLHF-heavy models (chat) show low sparsity, code/instruct models show higher
+    MODEL_PAIRS = {
+        "Llama-2-7B (base → chat)": ("meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-7b-chat-hf"),
+        "Llama-2-13B (base → chat)": ("meta-llama/Llama-2-13b-hf", "meta-llama/Llama-2-13b-chat-hf"),
+        "Llama-2-70B (base → chat) [RLHF-heavy]": ("meta-llama/Llama-2-70b-hf", "meta-llama/Llama-2-70b-chat-hf"),
+        "CodeLlama-70B (base → instruct) [RECOMMENDED]": ("codellama/CodeLlama-70b-hf", "codellama/CodeLlama-70b-Instruct-hf"),
+        "Llama-2-70B → CodeLlama-70B [code adaptation]": ("meta-llama/Llama-2-70b-hf", "codellama/CodeLlama-70b-hf"),
+        "Mistral-7B (base → instruct)": ("mistralai/Mistral-7B-v0.1", "mistralai/Mistral-7B-Instruct-v0.1"),
+        "CodeLlama-7B (base → instruct)": ("codellama/CodeLlama-7b-hf", "codellama/CodeLlama-7b-Instruct-hf"),
+    }
+    
+    def get_model_pair(selection):
+        base, finetune = MODEL_PAIRS.get(selection, ("", ""))
+        return base, finetune
+    
     # Tab 1: Delta Compression
     with gr.Tab("📦 Delta Compression (PRIMARY)"):
-        gr.Markdown("### Test delta compression on any model")
+        gr.Markdown("### Test delta compression between base and fine-tuned model")
+        gr.Markdown("*Compare a base model to its fine-tune to see compression savings*")
         
         with gr.Row():
             with gr.Column():
-                delta_model = gr.Textbox(
+                delta_preset = gr.Dropdown(
+                    label="Model Pair",
+                    choices=list(MODEL_PAIRS.keys()),
+                    value="Llama-2-7B (base → chat)"
+                )
+                delta_base = gr.Textbox(
                     label="Base Model",
                     value="meta-llama/Llama-2-7b-hf",
-                    placeholder="meta-llama/Llama-2-70b-hf"
+                    interactive=True
+                )
+                delta_finetune = gr.Textbox(
+                    label="Fine-tuned Model",
+                    value="meta-llama/Llama-2-7b-chat-hf",
+                    interactive=True
                 )
                 delta_threshold = gr.Slider(
                     label="Sparsity Threshold",
@@ -205,9 +273,16 @@ with gr.Blocks(title="Sparse - Full Feature Testing", theme=gr.themes.Soft()) as
             with gr.Column():
                 delta_output = gr.JSON(label="Results")
         
+        # Update text fields when dropdown changes
+        delta_preset.change(
+            get_model_pair,
+            inputs=[delta_preset],
+            outputs=[delta_base, delta_finetune]
+        )
+        
         delta_btn.click(
             test_delta_compression,
-            inputs=[delta_model, delta_threshold],
+            inputs=[delta_base, delta_finetune, delta_threshold],
             outputs=delta_output
         )
     
