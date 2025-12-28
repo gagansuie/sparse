@@ -115,8 +115,6 @@ pub fn dequantize_int8<'py>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_quantize_logic() {
         let data = vec![0.0f32, 1.0, -1.0, 0.5, -0.5];
