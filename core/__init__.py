@@ -38,6 +38,12 @@ from .delta import (
     DeltaManifest,
 )
 
+from .fast_reconstruct import (
+    DeltaCache,
+    from_pretrained_with_delta,
+    get_global_cache,
+)
+
 __version__ = "0.2.0"
 __all__ = [
     # Quantization wrapper
@@ -58,4 +64,8 @@ __all__ = [
     "reconstruct_from_delta",
     "estimate_delta_savings",
     "DeltaManifest",
+    # Fast reconstruction
+    "DeltaCache",
+    "from_pretrained_with_delta",
+    "get_global_cache",
 ]
