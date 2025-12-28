@@ -72,7 +72,12 @@ class TestEstimateDeltaSavings:
         assert "estimated_compression" in savings
         assert "avg_sparsity" in savings
         assert "sample_layers" in savings
+        assert "best_strategy" in savings
+        assert "sparse_compression" in savings
+        assert "int8_compression" in savings
+        assert "sparse_int8_compression" in savings
         assert savings["estimated_compression"] > 0
+        assert savings["best_strategy"] in ["sparse", "int8", "sparse+int8"]
 
 
 class TestCompressDelta:
