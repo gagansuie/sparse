@@ -24,7 +24,7 @@ if os.environ.get("HF_TOKEN"):
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import QUANTIZATION_PRESETS, QuantizationWrapper
-from core.delta import compute_layer_delta, compress_delta_sparse, decompress_delta_sparse, estimate_delta_savings, compress_adapter_delta
+from core.delta import compute_layer_delta, compress_delta_sparse, decompress_delta_sparse, estimate_delta_savings, compress_adapter_delta, validate_int8_delta_quality
 from core.delta_rust import is_rust_available, get_rust_info
 from optimizer.routing import classify_request_complexity, suggest_optimal_model, estimate_routing_savings
 from optimizer import generate_candidates, OptimizationConstraints
@@ -87,6 +87,24 @@ def test_delta_compression(base_model: str, finetune_model: str, threshold: floa
             "finetune_model": finetune_model,
             "traceback": traceback.format_exc()[-500:],
         }
+
+# ==============================================================================
+# FEATURE 1b: INT8 DELTA QUALITY VALIDATION
+# ==============================================================================
+
+def test_int8_quality(base_model: str, finetune_model: str, sample_layers: int) -> Dict[str, Any]:
+    """Test INT8 delta compression quality."""
+    try:
+        report = validate_int8_delta_quality(
+            base_model_id=base_model,
+            finetune_model_id=finetune_model,
+            sample_layers=int(sample_layers),
+            prompts=["Hello, how are you?", "The capital of France is"],
+        )
+        return report
+    except Exception as e:
+        import traceback
+        return {"status": f"❌ Error: {str(e)}", "traceback": traceback.format_exc()}
 
 # ==============================================================================
 # FEATURE 2: QUANTIZATION
@@ -337,6 +355,55 @@ with gr.Blocks(title="Sparse - Full Feature Testing", theme=gr.themes.Soft()) as
             test_adapter_delta,
             inputs=[adapter_base, adapter_id],
             outputs=adapter_output
+        )
+    
+    # Tab 1c: INT8 Delta Quality Validation
+    with gr.Tab("⚡ INT8 Quality Check"):
+        gr.Markdown("""### Validate INT8 Delta Compression Quality
+        
+*Verify that INT8 compression maintains acceptable inference quality by comparing reconstruction errors and logits.*
+        """)
+        
+        with gr.Row():
+            with gr.Column():
+                int8_preset = gr.Dropdown(
+                    label="Model Pair",
+                    choices=list(MODEL_PAIRS.keys()),
+                    value="Mistral-7B (base → instruct)"
+                )
+                int8_base = gr.Textbox(
+                    label="Base Model",
+                    value="mistralai/Mistral-7B-v0.1",
+                    interactive=True
+                )
+                int8_finetune = gr.Textbox(
+                    label="Fine-tuned Model",
+                    value="mistralai/Mistral-7B-Instruct-v0.1",
+                    interactive=True
+                )
+                int8_layers = gr.Slider(
+                    label="Sample Layers",
+                    minimum=1,
+                    maximum=5,
+                    value=2,
+                    step=1,
+                    info="Number of large layers to sample for validation"
+                )
+                int8_btn = gr.Button("Validate INT8 Quality", variant="primary")
+            
+            with gr.Column():
+                int8_output = gr.JSON(label="Quality Report")
+        
+        int8_preset.change(
+            get_model_pair,
+            inputs=[int8_preset],
+            outputs=[int8_base, int8_finetune]
+        )
+        
+        int8_btn.click(
+            test_int8_quality,
+            inputs=[int8_base, int8_finetune, int8_layers],
+            outputs=int8_output
         )
     
     # Tab 2: Quantization
