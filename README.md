@@ -71,6 +71,29 @@
 
 **No one else offers this** — HuggingFace Hub, AWS, Azure all store full fine-tuned models.
 
+### Compression Strategy Guide
+
+Sparse automatically selects the best compression strategy based on your fine-tune type:
+
+| Strategy | Best For | Sparsity | Compression | Why |
+|----------|----------|----------|-------------|-----|
+| **Sparse** | LoRA/PEFT adapters | >90% | 10-50x | Few weights change, indices are cheap |
+| **INT8** | Instruction tuning | <50% | 2x | Many weights change, quantize everything |
+| **Sparse+INT8** | Domain adaptation | 50-90% | 3-10x | Moderate changes, combine both |
+
+**How it works:**
+- **High sparsity** (>90%): Most weights unchanged → store only changed indices+values
+- **Low sparsity** (<50%): Most weights changed → storing indices costs MORE than savings
+- **INT8 always gives 2x**: Compresses ALL weights regardless of sparsity
+
+**Example results:**
+| Fine-tune Type | Typical Sparsity | Best Strategy | Compression |
+|----------------|------------------|---------------|-------------|
+| LoRA adapter | 95-99% | Sparse | 20-50x |
+| Instruction tuning | 3-10% | INT8 | 2x |
+| Domain adaptation | 40-70% | Sparse+INT8 | 3-5x |
+| Style transfer | 80-95% | Sparse | 5-20x |
+
 ### Why This Matters for Model Hubs
 
 | Platform | Fine-tunes Hosted | Wasted Storage | Annual Cost |
