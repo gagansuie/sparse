@@ -243,14 +243,13 @@ with gr.Blocks(title="Sparse - Full Feature Testing", theme=gr.themes.Soft()) as
     
     # Model pairs for delta compression testing
     # Note: RLHF-heavy models (chat) show low sparsity, code/instruct models show higher
+    # Non-gated models only (no Llama-2 which requires Meta approval)
     MODEL_PAIRS = {
-        "Llama-2-7B (base → chat)": ("meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-7b-chat-hf"),
-        "Llama-2-13B (base → chat)": ("meta-llama/Llama-2-13b-hf", "meta-llama/Llama-2-13b-chat-hf"),
-        "Llama-2-70B (base → chat) [RLHF-heavy]": ("meta-llama/Llama-2-70b-hf", "meta-llama/Llama-2-70b-chat-hf"),
-        "CodeLlama-70B (base → instruct) [RECOMMENDED]": ("codellama/CodeLlama-70b-hf", "codellama/CodeLlama-70b-Instruct-hf"),
-        "Llama-2-70B → CodeLlama-70B [code adaptation]": ("meta-llama/Llama-2-70b-hf", "codellama/CodeLlama-70b-hf"),
         "Mistral-7B (base → instruct)": ("mistralai/Mistral-7B-v0.1", "mistralai/Mistral-7B-Instruct-v0.1"),
         "CodeLlama-7B (base → instruct)": ("codellama/CodeLlama-7b-hf", "codellama/CodeLlama-7b-Instruct-hf"),
+        "CodeLlama-13B (base → instruct)": ("codellama/CodeLlama-13b-hf", "codellama/CodeLlama-13b-Instruct-hf"),
+        "CodeLlama-34B (base → instruct)": ("codellama/CodeLlama-34b-hf", "codellama/CodeLlama-34b-Instruct-hf"),
+        "CodeLlama-70B (base → instruct) [RECOMMENDED]": ("codellama/CodeLlama-70b-hf", "codellama/CodeLlama-70b-Instruct-hf"),
     }
     
     def get_model_pair(selection):
@@ -267,16 +266,16 @@ with gr.Blocks(title="Sparse - Full Feature Testing", theme=gr.themes.Soft()) as
                 delta_preset = gr.Dropdown(
                     label="Model Pair",
                     choices=list(MODEL_PAIRS.keys()),
-                    value="Llama-2-7B (base → chat)"
+                    value="Mistral-7B (base → instruct)"
                 )
                 delta_base = gr.Textbox(
                     label="Base Model",
-                    value="meta-llama/Llama-2-7b-hf",
+                    value="mistralai/Mistral-7B-v0.1",
                     interactive=True
                 )
                 delta_finetune = gr.Textbox(
                     label="Fine-tuned Model",
-                    value="meta-llama/Llama-2-7b-chat-hf",
+                    value="mistralai/Mistral-7B-Instruct-v0.1",
                     interactive=True
                 )
                 delta_threshold = gr.Slider(
@@ -315,7 +314,7 @@ with gr.Blocks(title="Sparse - Full Feature Testing", theme=gr.themes.Soft()) as
             with gr.Column():
                 adapter_base = gr.Textbox(
                     label="Base Model",
-                    value="meta-llama/Llama-2-7b-hf",
+                    value="mistralai/Mistral-7B-v0.1",
                     info="The base model the adapter was trained on"
                 )
                 adapter_id = gr.Textbox(
@@ -414,7 +413,7 @@ with gr.Blocks(title="Sparse - Full Feature Testing", theme=gr.themes.Soft()) as
             with gr.Column():
                 quant_model = gr.Textbox(
                     label="Model",
-                    value="meta-llama/Llama-2-70b-hf"
+                    value="codellama/CodeLlama-70b-hf"
                 )
                 quant_preset = gr.Dropdown(
                     label="Preset",
@@ -451,7 +450,7 @@ with gr.Blocks(title="Sparse - Full Feature Testing", theme=gr.themes.Soft()) as
                 )
                 routing_model = gr.Textbox(
                     label="Requested Model",
-                    value="meta-llama/Llama-2-70b-hf"
+                    value="codellama/CodeLlama-70b-hf"
                 )
                 routing_btn = gr.Button("Get Routing", variant="primary")
             

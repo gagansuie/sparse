@@ -57,10 +57,15 @@ class RoutingDecision:
     alternatives: List[Dict]
 
 
-# Model database
-MODEL_SPECS = {
-    "meta-llama/Llama-2-70b-hf": ModelSpec(
-        model_id="meta-llama/Llama-2-70b-hf",
+# Demo model database - DEFAULTS FOR TESTING ONLY
+# In production, this should be populated dynamically from:
+# - Customer's model registry
+# - HuggingFace Hub API
+# - Internal model catalog
+# The routing logic is model-agnostic; these are just example specs
+DEMO_MODEL_SPECS = {
+    "codellama/CodeLlama-70b-hf": ModelSpec(
+        model_id="codellama/CodeLlama-70b-hf",
         size_b=70.0,
         min_memory_gb=40,
         recommended_hardware=[HardwareType.A100_40GB, HardwareType.A100_80GB, HardwareType.H100],
@@ -71,8 +76,8 @@ MODEL_SPECS = {
         },
         quality_score=1.0
     ),
-    "meta-llama/Llama-2-13b-hf": ModelSpec(
-        model_id="meta-llama/Llama-2-13b-hf",
+    "codellama/CodeLlama-13b-hf": ModelSpec(
+        model_id="codellama/CodeLlama-13b-hf",
         size_b=13.0,
         min_memory_gb=16,
         recommended_hardware=[HardwareType.A10G, HardwareType.A100_40GB],
@@ -82,8 +87,8 @@ MODEL_SPECS = {
         },
         quality_score=0.92
     ),
-    "meta-llama/Llama-2-7b-hf": ModelSpec(
-        model_id="meta-llama/Llama-2-7b-hf",
+    "mistralai/Mistral-7B-v0.1": ModelSpec(
+        model_id="mistralai/Mistral-7B-v0.1",
         size_b=7.0,
         min_memory_gb=8,
         recommended_hardware=[HardwareType.T4, HardwareType.A10G],
@@ -171,13 +176,13 @@ def suggest_optimal_model(
     
     # Get all models that meet quality threshold
     candidate_models = [
-        spec for spec in MODEL_SPECS.values()
+        spec for spec in DEMO_MODEL_SPECS.values()
         if spec.quality_score >= quality_threshold
     ]
     
     if not candidate_models:
         # No models meet threshold, use requested
-        requested_spec = MODEL_SPECS.get(requested_model)
+        requested_spec = DEMO_MODEL_SPECS.get(requested_model)
         if not requested_spec:
             raise ValueError(f"Unknown model: {requested_model}")
         
@@ -221,7 +226,7 @@ def suggest_optimal_model(
     
     if not scored_candidates:
         # Fallback to requested model
-        requested_spec = MODEL_SPECS.get(requested_model, list(MODEL_SPECS.values())[0])
+        requested_spec = DEMO_MODEL_SPECS.get(requested_model, list(DEMO_MODEL_SPECS.values())[0])
         best_hardware = requested_spec.recommended_hardware[0]
         
         return RoutingDecision(
@@ -241,7 +246,7 @@ def suggest_optimal_model(
     alternatives = scored_candidates[1:6]  # Top 5 alternatives
     
     # Build reasoning
-    requested_spec = MODEL_SPECS.get(requested_model)
+    requested_spec = DEMO_MODEL_SPECS.get(requested_model)
     if requested_spec and best["model"] != requested_model:
         requested_cost = _calculate_cost(
             requested_spec,
