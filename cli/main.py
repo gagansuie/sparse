@@ -55,33 +55,47 @@ def cmd_pack(args):
         print("=" * 60)
         
         return 0
-        
+
     except Exception as e:
         print(f"[ERROR] {e}")
         return 1
 
 
-def cmd_pack_legacy(args):
-    """DEPRECATED: Legacy compression command removed. Use QuantizationWrapper instead."""
-    print("❌ ERROR: Legacy compression command is no longer supported.")
+def cmd_delta_compress_adapter(args):
+    """Package a PEFT adapter (e.g., LoRA) as a delta artifact."""
+    from core.delta import compress_adapter_delta
+
+    print(f"Sparse Delta Compress (Adapter)")
+    print(f"  Base model:     {args.base_model}")
+    print(f"  Adapter:        {args.adapter}")
+    print(f"  Output:         {args.output}")
     print()
-    print("The custom Rust compression codecs have been removed in Sparse v0.2.0.")
-    print("Sparse now wraps industry-standard quantization tools instead.")
+
+    def progress_callback(msg, progress):
+        bar_width = 30
+        filled = int(bar_width * progress)
+        bar = "█" * filled + "░" * (bar_width - filled)
+        print(f"\r[{bar}] {progress*100:5.1f}% - {msg[:50]:<50}", end="", flush=True)
+        if progress >= 1.0:
+            print()
+
+    manifest = compress_adapter_delta(
+        base_model_id=args.base_model,
+        adapter_id=args.adapter,
+        output_path=args.output,
+        progress_callback=progress_callback,
+    )
+
     print()
-    print("Please use one of these commands instead:")
-    print()
-    print("  # Quantize with a preset:")
-    print("  sparse pack <model> --preset awq_balanced")
-    print()
-    print("  # Available presets:")
-    print("  - gptq_quality, gptq_balanced, gptq_aggressive")
-    print("  - awq_quality, awq_balanced, awq_fast")
-    print("  - bnb_nf4, bnb_int8")
-    print()
-    print("  # Or use the optimizer to auto-select:")
-    print("  sparse optimize <model> --max-ppl-delta 2.0")
-    print()
-    return 1
+    print("=" * 60)
+    print("ADAPTER DELTA PACKAGED")
+    print("=" * 60)
+    print(f"  Base model:       {manifest.base_model_id}")
+    print(f"  Adapter:          {manifest.finetune_model_id}")
+    print(f"  Output:           {args.output}")
+    print("=" * 60)
+
+    return 0
 
 
 def cmd_eval(args):
@@ -434,6 +448,8 @@ def cmd_delta_model(args):
     """Handle delta compression commands."""
     if args.delta_command == "compress":
         return cmd_delta_compress(args)
+    elif args.delta_command == "compress-adapter":
+        return cmd_delta_compress_adapter(args)
     elif args.delta_command == "reconstruct":
         return cmd_delta_reconstruct(args)
     elif args.delta_command == "estimate":
@@ -854,12 +870,6 @@ def main():
     pack_parser = subparsers.add_parser("pack", help="Compress a model")
     pack_parser.add_argument("model_id", help="HuggingFace model ID or local path")
     pack_parser.add_argument(
-        "--target", "-t",
-        choices=["quality", "balanced", "size"],
-        default="balanced",
-        help="Target preset mapping: quality=gptq_quality, balanced=awq_balanced, size=gptq_aggressive (deprecated, use --preset instead)"
-    )
-    pack_parser.add_argument(
         "--output", "-o",
         help="Output path for artifact"
     )
@@ -1089,6 +1099,22 @@ def main():
         "--output", "-o",
         required=True,
         help="Output path for delta artifact"
+    )
+
+    # delta compress-adapter
+    delta_compress_adapter = delta_subparsers.add_parser(
+        "compress-adapter",
+        help="Package a PEFT adapter (e.g., LoRA) as a delta artifact",
+    )
+    delta_compress_adapter.add_argument("base_model", help="Base model HuggingFace ID")
+    delta_compress_adapter.add_argument(
+        "adapter",
+        help="Adapter HuggingFace ID or local path",
+    )
+    delta_compress_adapter.add_argument(
+        "--output", "-o",
+        required=True,
+        help="Output path for adapter delta artifact",
     )
     
     # delta reconstruct

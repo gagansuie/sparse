@@ -24,7 +24,7 @@ if os.environ.get("HF_TOKEN"):
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import QUANTIZATION_PRESETS, QuantizationWrapper
-from core.delta import compute_layer_delta, compress_delta_sparse, decompress_delta_sparse, estimate_delta_savings
+from core.delta import compute_layer_delta, compress_delta_sparse, decompress_delta_sparse, estimate_delta_savings, compress_adapter_delta
 from core.delta_rust import is_rust_available, get_rust_info
 from optimizer.routing import classify_request_complexity, suggest_optimal_model, estimate_routing_savings
 from optimizer import generate_candidates, OptimizationConstraints
@@ -284,6 +284,59 @@ with gr.Blocks(title="Sparse - Full Feature Testing", theme=gr.themes.Soft()) as
             test_delta_compression,
             inputs=[delta_base, delta_finetune, delta_threshold],
             outputs=delta_output
+        )
+    
+    # Tab 1b: Adapter Delta (Optional)
+    with gr.Tab("🔌 Adapter Delta (Optional)"):
+        gr.Markdown("""### Package LoRA/PEFT Adapters as Delta Artifacts
+        
+*Adapters are treated as a delta type within the same framework. This is optional — full model deltas remain the primary feature.*
+        """)
+        
+        with gr.Row():
+            with gr.Column():
+                adapter_base = gr.Textbox(
+                    label="Base Model",
+                    value="meta-llama/Llama-2-7b-hf",
+                    info="The base model the adapter was trained on"
+                )
+                adapter_id = gr.Textbox(
+                    label="Adapter (HF ID or local path)",
+                    value="",
+                    placeholder="e.g., my-org/llama-lora-adapter",
+                    info="LoRA/PEFT adapter to package"
+                )
+                adapter_btn = gr.Button("Package Adapter Delta", variant="secondary")
+            
+            with gr.Column():
+                adapter_output = gr.JSON(label="Results")
+        
+        def test_adapter_delta(base_model: str, adapter: str):
+            if not adapter:
+                return {"status": "❌ Error", "message": "Please provide an adapter ID or path"}
+            try:
+                import tempfile
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    manifest = compress_adapter_delta(
+                        base_model_id=base_model,
+                        adapter_id=adapter,
+                        output_path=tmpdir
+                    )
+                    return {
+                        "status": "✅ Success",
+                        "delta_type": manifest.delta_type,
+                        "base_model": manifest.base_model_id,
+                        "adapter": manifest.finetune_model_id,
+                        "note": "Adapter packaged as delta artifact. Use reconstruct_from_delta() to apply."
+                    }
+            except Exception as e:
+                import traceback
+                return {"status": f"❌ Error: {str(e)}", "traceback": traceback.format_exc()[-500:]}
+        
+        adapter_btn.click(
+            test_adapter_delta,
+            inputs=[adapter_base, adapter_id],
+            outputs=adapter_output
         )
     
     # Tab 2: Quantization

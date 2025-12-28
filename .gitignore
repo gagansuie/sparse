@@ -33,5 +33,11 @@ venv/
 /tmp_eval/
 /offload_tmp/
 
+# hf_space symlinks (actual code is in /core, /optimizer, /rust)
+hf_space/core
+hf_space/optimizer
+hf_space/rust
+hf_space_deploy/
+
 # Archive (old experiments - keep in git but ignore changes)
 # archive/

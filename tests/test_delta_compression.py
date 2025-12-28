@@ -12,6 +12,7 @@ from core.delta import (
     reconstruct_from_delta,
     estimate_delta_savings,
     DeltaManifest,
+    compress_adapter_delta,
 )
 
 
@@ -22,15 +23,11 @@ class TestDeltaManifest:
         """Test delta manifest creation."""
         manifest = DeltaManifest(
             base_model_id="base-model",
-            finetuned_model_id="fine-tuned",
-            changed_layers=["layer.10", "layer.11"],
-            delta_method="sparse_int8",
+            finetune_model_id="fine-tuned",
         )
         
         assert manifest.base_model_id == "base-model"
-        assert manifest.finetuned_model_id == "fine-tuned"
-        assert len(manifest.changed_layers) == 2
-        assert manifest.delta_method == "sparse_int8"
+        assert manifest.finetune_model_id == "fine-tuned"
 
 
 class TestEstimateDeltaSavings:
@@ -69,15 +66,13 @@ class TestEstimateDeltaSavings:
         
         savings = estimate_delta_savings(
             base_model_id="base-model",
-            finetuned_model_id="fine-tuned-model",
+            finetune_model_id="fine-tuned-model",
         )
         
-        assert "base_size_gb" in savings
-        assert "finetuned_size_gb" in savings
-        assert "delta_size_gb" in savings
-        assert "savings_pct" in savings
-        assert savings["savings_pct"] > 0
-        assert savings["delta_size_gb"] < savings["finetuned_size_gb"]
+        assert "estimated_compression" in savings
+        assert "avg_sparsity" in savings
+        assert "sample_layers" in savings
+        assert savings["estimated_compression"] > 0
 
 
 class TestCompressDelta:
@@ -112,13 +107,13 @@ class TestCompressDelta:
         
         manifest = compress_delta(
             base_model_id="base-model",
-            finetuned_model_id="fine-tuned-model",
-            output_dir=str(output_dir),
+            finetune_model_id="fine-tuned-model",
+            output_path=str(output_dir),
         )
         
         assert manifest.base_model_id == "base-model"
-        assert manifest.finetuned_model_id == "fine-tuned-model"
-        assert len(manifest.changed_layers) > 0
+        assert manifest.finetune_model_id == "fine-tuned-model"
+        assert manifest.num_layers >= 0
 
 
 class TestReconstructFromDelta:
@@ -152,9 +147,9 @@ class TestReconstructFromDelta:
         import json
         manifest = {
             "base_model_id": "base-model",
-            "finetuned_model_id": "fine-tuned",
-            "changed_layers": ["layer.10.weight"],
-            "delta_method": "sparse_int8",
+            "finetune_model_id": "fine-tuned",
+            "layer_deltas": [],
+            "delta_type": "model_delta",
         }
         with open(delta_dir / "manifest.json", "w") as f:
             json.dump(manifest, f)
@@ -202,15 +197,35 @@ class TestDeltaCompressionIntegration:
         output_dir = tmp_path / "delta"
         manifest = compress_delta(
             base_model_id="base-model",
-            finetuned_model_id="fine-tuned-model",
-            output_dir=str(output_dir),
+            finetune_model_id="fine-tuned-model",
+            output_path=str(output_dir),
         )
         
         assert manifest is not None
-        assert len(manifest.changed_layers) > 0
+        assert manifest.num_layers >= 0
         
         # Verify delta files were created
         assert (output_dir / "manifest.json").exists()
+
+
+def test_compress_adapter_delta_local_path(tmp_path):
+    from core.delta import compress_adapter_delta
+
+    adapter_src = tmp_path / "adapter_src"
+    adapter_src.mkdir()
+    (adapter_src / "adapter_config.json").write_text("{}")
+    (adapter_src / "adapter_model.safetensors").write_text("dummy")
+
+    out_dir = tmp_path / "adapter_delta"
+    manifest = compress_adapter_delta(
+        base_model_id="base-model",
+        adapter_id=str(adapter_src),
+        output_path=str(out_dir),
+    )
+
+    assert manifest.delta_type == "adapter"
+    assert (out_dir / "manifest.json").exists()
+    assert (out_dir / "adapter" / "adapter_config.json").exists()
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ RUN rustc --version && cargo --version
 WORKDIR /app
 
 # Copy source code
+# NOTE: For HF Spaces, core/ and optimizer/ must be synced from main project before deploy
 COPY . .
 
 # Install maturin and build Rust extension

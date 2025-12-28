@@ -27,11 +27,12 @@ import os
 import json
 import torch
 import torch.nn as nn
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
 from pathlib import Path
 import hashlib
+import shutil
 
 
 @dataclass
@@ -60,6 +61,7 @@ class LayerDelta:
 class DeltaManifest:
     """Manifest for a delta artifact."""
     version: str = "1.0"
+    delta_type: str = "model_delta"
     base_model_id: str = ""
     finetune_model_id: str = ""
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
@@ -80,6 +82,7 @@ class DeltaManifest:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "version": self.version,
+            "delta_type": self.delta_type,
             "base_model_id": self.base_model_id,
             "finetune_model_id": self.finetune_model_id,
             "created_at": self.created_at,
@@ -94,7 +97,9 @@ class DeltaManifest:
     
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DeltaManifest":
-        return cls(**d)
+        field_names = {f.name for f in fields(cls)}
+        filtered = {k: v for k, v in d.items() if k in field_names}
+        return cls(**filtered)
 
 
 def compute_model_hash(model: nn.Module) -> str:
@@ -353,6 +358,7 @@ def compress_delta(
     
     # Compute deltas for each layer
     manifest = DeltaManifest(
+        delta_type="model_delta",
         base_model_id=base_model_id,
         finetune_model_id=finetune_model_id,
         base_model_hash=base_hash,
@@ -467,6 +473,58 @@ def compress_delta(
     return manifest
 
 
+def compress_adapter_delta(
+    base_model_id: str,
+    adapter_id: str,
+    output_path: str,
+    progress_callback: Optional[callable] = None,
+) -> DeltaManifest:
+    def log(msg: str, progress: float = 0.0):
+        if progress_callback:
+            progress_callback(msg, progress)
+        print(f"[Delta] {msg}")
+
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    adapter_path = output_path / "adapter"
+    adapter_path.mkdir(exist_ok=True)
+
+    log("Packaging adapter...", 0.1)
+
+    src = Path(adapter_id)
+    if src.exists():
+        if src.is_dir():
+            shutil.copytree(src, adapter_path, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, adapter_path / src.name)
+    else:
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as e:
+            raise ImportError(
+                "huggingface_hub is required to download adapters from the Hub"
+            ) from e
+
+        snapshot_download(
+            repo_id=adapter_id,
+            local_dir=str(adapter_path),
+            local_dir_use_symlinks=False,
+        )
+
+    manifest = DeltaManifest(
+        delta_type="adapter",
+        base_model_id=base_model_id,
+        finetune_model_id=adapter_id,
+    )
+
+    with open(output_path / "manifest.json", "w") as f:
+        json.dump(manifest.to_dict(), f, indent=2)
+
+    log("Adapter delta packaging complete!", 1.0)
+    return manifest
+
+
 def reconstruct_from_delta(
     base_model_id: str,
     delta_path: str,
@@ -497,6 +555,57 @@ def reconstruct_from_delta(
     log("Loading delta manifest...", 0.0)
     with open(delta_path / "manifest.json", "r") as f:
         manifest = DeltaManifest.from_dict(json.load(f))
+
+    if manifest.base_model_id and manifest.base_model_id != base_model_id:
+        log(
+            f"WARNING: Base model ID mismatch! Manifest expects {manifest.base_model_id}, got {base_model_id}"
+        )
+
+    if manifest.delta_type == "adapter":
+        log(f"Loading base model: {base_model_id}", 0.05)
+        model = AutoModelForCausalLM.from_pretrained(
+            base_model_id,
+            torch_dtype=torch.float16,
+            device_map="auto" if device == "cuda" else None,
+            low_cpu_mem_usage=True,
+        )
+
+        if manifest.base_model_hash:
+            base_hash = compute_model_hash(model)
+            if base_hash != manifest.base_model_hash:
+                log(
+                    f"WARNING: Base model hash mismatch! Expected {manifest.base_model_hash}, got {base_hash}"
+                )
+
+        adapter_dir = delta_path / "adapter"
+        if adapter_dir.exists() and any(adapter_dir.iterdir()):
+            adapter_source = str(adapter_dir)
+        else:
+            adapter_source = manifest.finetune_model_id
+
+        if not adapter_source:
+            raise ValueError("Adapter delta manifest missing adapter source")
+
+        try:
+            from peft import PeftModel
+        except ImportError as e:
+            raise ImportError(
+                "peft is required to reconstruct models from adapter deltas"
+            ) from e
+
+        log("Applying adapter...", 0.30)
+        peft_model = PeftModel.from_pretrained(model, adapter_source)
+
+        if hasattr(peft_model, "merge_and_unload"):
+            try:
+                model = peft_model.merge_and_unload()
+            except Exception:
+                model = peft_model
+        else:
+            model = peft_model
+
+        log("Reconstruction complete!", 1.0)
+        return model
     
     # Verify base model matches
     log(f"Loading base model: {base_model_id}", 0.05)
@@ -510,7 +619,7 @@ def reconstruct_from_delta(
     
     # Verify hash
     base_hash = compute_model_hash(model)
-    if base_hash != manifest.base_model_hash:
+    if manifest.base_model_hash and base_hash != manifest.base_model_hash:
         log(f"WARNING: Base model hash mismatch! Expected {manifest.base_model_hash}, got {base_hash}")
     
     log("Applying deltas...", 0.30)
@@ -634,3 +743,155 @@ def estimate_delta_savings(
         "avg_sparsity": avg_sparsity,
         "sample_layers": len(sample_names),
     }
+
+
+def validate_int8_delta_quality(
+    base_model_id: str,
+    finetune_model_id: str,
+    sample_layers: int = 2,
+    prompts: Optional[List[str]] = None,
+    max_length: int = 128,
+) -> Dict[str, Any]:
+    """Validate INT8 delta compression quality with real model inference.
+    
+    Args:
+        base_model_id: Base model HuggingFace ID
+        finetune_model_id: Fine-tuned model HuggingFace ID
+        sample_layers: Number of large layers to sample
+        prompts: Test prompts for logits comparison
+        max_length: Max tokenization length
+        
+    Returns:
+        Dict with layer metrics, logits metrics, and timings
+    """
+    import time
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from core.delta_rust import is_rust_available
+    
+    if prompts is None:
+        prompts = ["Hello, how are you?", "The capital of France is"]
+    
+    result = {
+        "status": "✅ Completed",
+        "base_model": base_model_id,
+        "finetune_model": finetune_model_id,
+        "sample_layers_requested": sample_layers,
+        "rust_acceleration": is_rust_available(),
+        "prompts": prompts,
+        "layer_metrics": [],
+        "logits_metrics": [],
+        "timings": {},
+    }
+    
+    try:
+        # Load base model
+        t0 = time.time()
+        base_model = AutoModelForCausalLM.from_pretrained(
+            base_model_id,
+            torch_dtype=torch.float16,
+            device_map="cpu",
+            low_cpu_mem_usage=True,
+        )
+        result["timings"]["load_base_s"] = time.time() - t0
+        
+        # Load fine-tuned model
+        t0 = time.time()
+        finetune_model = AutoModelForCausalLM.from_pretrained(
+            finetune_model_id,
+            torch_dtype=torch.float16,
+            device_map="cpu",
+            low_cpu_mem_usage=True,
+        )
+        result["timings"]["load_finetune_s"] = time.time() - t0
+        
+        base_params = dict(base_model.named_parameters())
+        finetune_params = dict(finetune_model.named_parameters())
+        
+        # Select large layers to sample
+        param_names = [
+            n for n in base_params.keys() 
+            if 'weight' in n and base_params[n].numel() > 1_000_000
+        ]
+        sample_names = param_names[::max(1, len(param_names) // sample_layers)][:sample_layers]
+        
+        # Test INT8 compression quality per layer
+        for name in sample_names:
+            base_weight = base_params[name].data
+            finetune_weight = finetune_params[name].data
+            
+            delta = finetune_weight - base_weight
+            
+            # Compress to INT8
+            quantized_bytes, scale, compression_ratio = compress_delta_int8(delta)
+            
+            # Decompress
+            reconstructed_delta = decompress_delta_int8(
+                quantized_bytes, scale, delta.shape, dtype=delta.dtype
+            )
+            
+            # Compute reconstruction error
+            error = (delta - reconstructed_delta).abs()
+            
+            result["layer_metrics"].append({
+                "name": name,
+                "shape": list(delta.shape),
+                "numel": delta.numel(),
+                "scale": scale,
+                "compression_ratio": compression_ratio,
+                "max_abs_error": error.max().item(),
+                "mean_abs_error": error.mean().item(),
+            })
+        
+        # Apply deltas to base model to create reconstructed model
+        with torch.no_grad():
+            for name in sample_names:
+                base_weight = base_params[name].data
+                finetune_weight = finetune_params[name].data
+                delta = finetune_weight - base_weight
+                
+                quantized_bytes, scale, _ = compress_delta_int8(delta)
+                reconstructed_delta = decompress_delta_int8(
+                    quantized_bytes, scale, delta.shape, dtype=delta.dtype
+                )
+                
+                base_params[name].data.add_(reconstructed_delta)
+        
+        # Compare logits on test prompts
+        tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        
+        # Reload original fine-tuned for comparison
+        t0 = time.time()
+        finetune_model_orig = AutoModelForCausalLM.from_pretrained(
+            finetune_model_id,
+            torch_dtype=torch.float16,
+            device_map="cpu",
+            low_cpu_mem_usage=True,
+        )
+        result["timings"]["reload_orig_s"] = time.time() - t0
+        
+        base_model.eval()
+        finetune_model_orig.eval()
+        
+        for prompt in prompts:
+            inputs = tokenizer(prompt, return_tensors="pt", max_length=max_length, truncation=True)
+            
+            with torch.no_grad():
+                reconstructed_logits = base_model(**inputs).logits
+                original_logits = finetune_model_orig(**inputs).logits
+            
+            diff = (reconstructed_logits - original_logits).abs()
+            
+            result["logits_metrics"].append({
+                "prompt": prompt,
+                "max_logit_diff": diff.max().item(),
+                "mean_logit_diff": diff.mean().item(),
+            })
+        
+        del base_model, finetune_model, finetune_model_orig
+        
+    except Exception as e:
+        result["status"] = f"❌ Error: {str(e)}"
+    
+    return result
