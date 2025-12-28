@@ -144,135 +144,20 @@ def compute_layer_delta(
     return delta, stats
 
 
-def compress_delta_sparse(
-    delta: torch.Tensor,
-    threshold: float = 1e-6,
-) -> Tuple[torch.Tensor, torch.Tensor, float]:
-    """Compress delta using sparse representation.
-    
-    Only stores non-zero deltas (values above threshold).
-    Uses Rust implementation when available for 10-20x speedup.
-    
-    Returns:
-        Tuple of (indices, values, compression_ratio)
-    """
-    # Try Rust implementation first
-    try:
-        from core.delta_rust import compress_delta_sparse_rust, is_rust_available
-        if is_rust_available():
-            return compress_delta_sparse_rust(delta, threshold)
-    except (ImportError, RuntimeError):
-        pass
-    
-    # Python fallback
-    # Find non-zero elements
-    flat_delta = delta.flatten()
-    mask = torch.abs(flat_delta) >= threshold
-    indices = torch.nonzero(mask).squeeze(-1)
-    values = flat_delta[mask]
-    
-    # Calculate compression ratio
-    original_size = delta.numel() * 2  # FP16 baseline
-    compressed_size = indices.numel() * 4 + values.numel() * 2  # indices int32 + values FP16
-    # Ensure ratio is at least 1.0 (no worse than uncompressed)
-    compression_ratio = max(original_size / max(compressed_size, 1), 1.0)
-    
-    return indices, values, compression_ratio
+# =============================================================================
+# HYBRID COMPRESSION FUNCTIONS (imported from delta_rust.py)
+# =============================================================================
+# Single source of truth - all implementations in delta_rust.py
+# Uses Rust when available, minimal Python fallback in same file
 
-
-def decompress_delta_sparse(
-    indices: torch.Tensor,
-    values: torch.Tensor,
-    shape: Tuple[int, ...],
-    dtype: torch.dtype = torch.float16,
-) -> torch.Tensor:
-    """Decompress sparse delta back to full tensor.
-    
-    Uses Rust implementation when available for 10-20x speedup.
-    """
-    # Try Rust implementation first (only for CPU tensors)
-    if values.device == torch.device('cpu'):
-        try:
-            from core.delta_rust import decompress_delta_sparse_rust, is_rust_available
-            if is_rust_available():
-                return decompress_delta_sparse_rust(indices, values, shape, dtype)
-        except (ImportError, RuntimeError):
-            pass
-    
-    # Python fallback
-    # Use same dtype as values for better precision
-    target_dtype = values.dtype if dtype == torch.float16 else dtype
-    delta = torch.zeros(shape, dtype=target_dtype, device=values.device).flatten()
-    # Ensure indices are within bounds and convert to long for indexing
-    delta[indices.long()] = values
-    return delta.reshape(shape)
-
-
-def compress_delta_int8(
-    delta: torch.Tensor,
-) -> Tuple[bytes, float, float]:
-    """Compress delta using INT8 quantization.
-    
-    Good for small deltas where sparse representation isn't efficient.
-    Uses Rust implementation when available for 5-10x speedup.
-    
-    Returns:
-        Tuple of (quantized_bytes, scale, compression_ratio)
-    """
-    # Try Rust implementation first
-    try:
-        from core.delta_rust import compress_delta_int8_rust, is_rust_available
-        if is_rust_available():
-            return compress_delta_int8_rust(delta)
-    except (ImportError, RuntimeError):
-        pass
-    
-    # Python fallback
-    # Compute scale
-    max_abs = torch.max(torch.abs(delta)).item()
-    if max_abs < 1e-10:
-        scale = 1.0
-    else:
-        scale = max_abs / 127.0
-    
-    # Quantize to INT8
-    quantized = torch.clamp(torch.round(delta / scale), -127, 127).to(torch.int8)
-    quantized_bytes = quantized.cpu().numpy().tobytes()
-    
-    # Calculate compression ratio (FP16 -> INT8 = 2x, FP32 -> INT8 = 4x)
-    original_size = delta.numel() * 2  # FP16 baseline
-    compressed_size = len(quantized_bytes) + 4  # +4 for scale
-    compression_ratio = original_size / compressed_size
-    
-    return quantized_bytes, scale, compression_ratio
-
-
-def decompress_delta_int8(
-    quantized_bytes: bytes,
-    scale: float,
-    shape: Tuple[int, ...],
-    dtype: torch.dtype = torch.float16,
-) -> torch.Tensor:
-    """Decompress INT8 delta back to full tensor.
-    
-    Uses Rust implementation when available for 5-10x speedup.
-    """
-    # Try Rust implementation first
-    try:
-        from core.delta_rust import decompress_delta_int8_rust, is_rust_available
-        if is_rust_available():
-            return decompress_delta_int8_rust(quantized_bytes, scale, shape, dtype)
-    except (ImportError, RuntimeError):
-        pass
-    
-    # Python fallback
-    import numpy as np
-    
-    quantized = torch.from_numpy(
-        np.frombuffer(quantized_bytes, dtype=np.int8).copy()
-    ).reshape(shape)
-    
-    return (quantized.to(dtype) * scale)
+from core.delta_rust import (
+    compress_delta_sparse,
+    decompress_delta_sparse,
+    compress_delta_int8,
+    decompress_delta_int8,
+    is_rust_available,
+    get_rust_info,
+)
 
 
 def choose_delta_method(
@@ -684,10 +569,11 @@ def estimate_delta_savings(
 ) -> Dict[str, float]:
     """Estimate storage savings without full compression.
     
-    Quick analysis by sampling a few layers.
+    Quick analysis by sampling a few layers. Tests each compression strategy
+    (sparse, int8, sparse+int8) and returns breakdown.
     
     Returns:
-        Dict with estimated compression ratio and statistics
+        Dict with estimated compression ratio, best strategy, and per-strategy breakdown
     """
     from transformers import AutoModelForCausalLM
     
@@ -709,39 +595,85 @@ def estimate_delta_savings(
     base_params = dict(base_model.named_parameters())
     finetune_params = dict(finetune_model.named_parameters())
     
-    # Sample layers
-    param_names = list(base_params.keys())
-    sample_names = param_names[::len(param_names) // sample_layers][:sample_layers]
+    # Sample layers (prefer large weight matrices)
+    param_names = [n for n in base_params.keys() if base_params[n].numel() > 10000]
+    if not param_names:
+        param_names = list(base_params.keys())
+    sample_names = param_names[::max(1, len(param_names) // sample_layers)][:sample_layers]
     
+    # Track metrics per strategy
+    total_original_size = 0
+    total_sparse_size = 0
+    total_int8_size = 0
+    total_sparse_int8_size = 0
     total_sparsity = 0
-    total_l2_norm = 0
     
     for name in sample_names:
         base_weight = base_params[name].data
         finetune_weight = finetune_params[name].data
         
-        # Use relative threshold based on weight magnitude for better accuracy
-        # Fine-tuning typically changes weights by 0.1-1% of their magnitude
-        weight_scale = torch.abs(base_weight).mean().item()
-        relative_threshold = max(weight_scale * 0.01, 1e-4)  # 1% of weight scale or 1e-4 minimum
+        if base_weight.shape != finetune_weight.shape:
+            continue
         
-        delta, stats = compute_layer_delta(base_weight, finetune_weight, threshold=relative_threshold)
-        total_sparsity += stats["sparsity"]
-        total_l2_norm += stats["l2_norm"]
+        # Compute delta
+        delta = finetune_weight - base_weight
+        original_size = delta.numel() * 2  # FP16 = 2 bytes
+        total_original_size += original_size
+        
+        # Use relative threshold based on weight magnitude
+        weight_scale = torch.abs(base_weight).mean().item()
+        relative_threshold = max(weight_scale * 0.01, 1e-6)
+        
+        # Calculate sparsity
+        sparsity = (torch.abs(delta) < relative_threshold).float().mean().item()
+        total_sparsity += sparsity
+        
+        # Strategy 1: Sparse compression
+        indices, values, _ = compress_delta_sparse(delta, threshold=relative_threshold)
+        sparse_size = indices.numel() * 4 + values.numel() * 2  # int32 indices + fp16 values
+        sparse_size = max(sparse_size, 1)  # Avoid division by zero
+        total_sparse_size += sparse_size
+        
+        # Strategy 2: INT8 compression
+        quantized_bytes, scale, _ = compress_delta_int8(delta)
+        int8_size = len(quantized_bytes) + 4  # +4 for scale
+        total_int8_size += int8_size
+        
+        # Strategy 3: Sparse + INT8 (apply sparsity first, then quantize non-zero)
+        # For sparse+int8, we only quantize the non-zero values
+        if values.numel() > 0:
+            sparse_int8_bytes, _, _ = compress_delta_int8(values)
+            sparse_int8_size = indices.numel() * 4 + len(sparse_int8_bytes) + 4
+        else:
+            sparse_int8_size = 4  # Just scale
+        total_sparse_int8_size += sparse_int8_size
     
-    avg_sparsity = total_sparsity / len(sample_names)
+    # Calculate compression ratios (cap at 1.0x minimum - can't be worse than original)
+    sparse_compression = max(total_original_size / max(total_sparse_size, 1), 1.0)
+    int8_compression = max(total_original_size / max(total_int8_size, 1), 1.0)
+    sparse_int8_compression = max(total_original_size / max(total_sparse_int8_size, 1), 1.0)
     
-    # Estimate compression ratio based on sparsity
-    # Sparse: ~sparsity * original_size reduction
-    # INT8: 2x reduction
-    estimated_compression = 1 / (1 - avg_sparsity * 0.8)  # Conservative estimate
+    avg_sparsity = total_sparsity / len(sample_names) if sample_names else 0
+    
+    # Determine best strategy
+    strategies = {
+        "sparse": sparse_compression,
+        "int8": int8_compression,
+        "sparse+int8": sparse_int8_compression,
+    }
+    best_strategy = max(strategies, key=strategies.get)
+    best_compression = strategies[best_strategy]
     
     del base_model, finetune_model
     
     return {
-        "estimated_compression": estimated_compression,
+        "estimated_compression": best_compression,
+        "best_strategy": best_strategy,
         "avg_sparsity": avg_sparsity,
         "sample_layers": len(sample_names),
+        "sparse_compression": sparse_compression,
+        "int8_compression": int8_compression,
+        "sparse_int8_compression": sparse_int8_compression,
     }
 
 

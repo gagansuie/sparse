@@ -44,11 +44,16 @@ def test_delta_compression_7b():
     try:
         savings = estimate_delta_savings(base_model_id, base_model_id)
         
+        savings_pct = (1 - 1/savings['estimated_compression']) * 100 if savings['estimated_compression'] > 1 else 0
         print("  Estimation Results:")
-        print(f"    Original size:     {savings.get('original_size_gb', 'N/A'):.2f} GB")
-        print(f"    Delta size:        {savings.get('delta_size_gb', 'N/A'):.2f} GB")
-        print(f"    Compression ratio: {savings.get('compression_ratio', 'N/A'):.2f}x")
-        print(f"    Savings:           {savings.get('savings_pct', 'N/A'):.1f}%")
+        print(f"    Best strategy:     {savings['best_strategy']}")
+        print(f"    Compression ratio: {savings['estimated_compression']:.2f}x")
+        print(f"    Average sparsity:  {savings['avg_sparsity']*100:.1f}%")
+        print(f"    Savings:           {savings_pct:.1f}%")
+        print(f"    Breakdown:")
+        print(f"      sparse:       {savings['sparse_compression']:.2f}x")
+        print(f"      int8:         {savings['int8_compression']:.2f}x")
+        print(f"      sparse+int8:  {savings['sparse_int8_compression']:.2f}x")
         print()
         
     except Exception as e:
