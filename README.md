@@ -30,6 +30,8 @@
 - 💰 **$15-20M/year savings** for platforms like HuggingFace
 - 🚀 **10x faster downloads** for fine-tuned models
 - 📊 **96% storage reduction** for instruction-tuned models
+- 🔌 **Optional adapter support** — LoRA/PEFT adapters as `delta_type: adapter`
+- ✅ **INT8 quality validation** — verify compression maintains model quality
 
 ### 2. 📊 Dataset Delta Compression (NEW)
 **Store derivative datasets as 70-90% smaller deltas from base datasets**
@@ -145,6 +147,9 @@ bash build.sh
 sparse delta compress meta-llama/Llama-2-7b-hf my-org/llama-finetuned --output ./delta
 sparse delta estimate meta-llama/Llama-2-7b-hf my-org/llama-finetuned
 
+# Adapter delta (LoRA/PEFT)
+sparse delta compress-adapter meta-llama/Llama-2-7b-hf my-org/llama-lora --output ./adapter_delta
+
 # Dataset delta compression
 sparse delta-dataset compress squad squad_v2 --output ./dataset_delta
 sparse delta-dataset estimate squad squad_v2
@@ -180,6 +185,44 @@ delta_manifest = compress_delta(
     output_path="./delta"
 )
 print(f"Compression: {delta_manifest.compression_ratio:.2f}x")
+```
+
+#### 1b. Adapter Delta (Optional)
+
+```python
+from core.delta import compress_adapter_delta, reconstruct_from_delta
+
+# Package a LoRA adapter as a delta artifact
+manifest = compress_adapter_delta(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    adapter_id="my-org/llama-lora-adapter",  # HF ID or local path
+    output_path="./adapter_delta"
+)
+print(f"Delta type: {manifest.delta_type}")  # "adapter"
+
+# Reconstruct model with adapter applied
+model = reconstruct_from_delta(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    delta_path="./adapter_delta"
+)
+```
+
+#### 1c. INT8 Quality Validation
+
+```python
+from core.delta import validate_int8_delta_quality
+
+# Validate INT8 compression maintains quality
+report = validate_int8_delta_quality(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    finetune_model_id="meta-llama/Llama-2-7b-chat-hf",
+    sample_layers=2,
+    prompts=["Hello, how are you?", "The capital of France is"],
+)
+
+print(f"Status: {report['status']}")
+for layer in report['layer_metrics']:
+    print(f"  {layer['name']}: max_err={layer['max_abs_error']:.6f}")
 ```
 
 #### 2. Dataset Delta Compression

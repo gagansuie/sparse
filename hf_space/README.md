@@ -32,6 +32,8 @@ The algorithm automatically selects the best compression strategy:
 - ✅ **70B model support** with sequential loading + CPU offload
 - ✅ **Multi-strategy compression** (auto-selects optimal)
 - ✅ **Rust acceleration** for high-performance compression
+- ✅ **INT8 delta quality validation** with logits comparison
+- ✅ **Adapter delta packaging** (LoRA/PEFT as delta artifacts)
 - ✅ **Quantization estimation** across model sizes
 - ✅ **Smart routing** recommendations
 - ✅ **Cost optimizer** candidate generation
@@ -42,6 +44,18 @@ The algorithm automatically selects the best compression strategy:
 - Int8 quantization provides guaranteed 50% compression
 - Rust-accelerated sparse compression with parallel processing
 - A100 GPU (40GB) handles 70B models efficiently
+
+## Deployment
+
+Build a deployment package (converts symlinks to actual files):
+
+```bash
+./hf_space/build_deploy.sh
+cd hf_space_deploy
+git init && git add . && git commit -m "Deploy"
+git remote add space https://huggingface.co/spaces/YOUR_USER/YOUR_SPACE
+git push space main
+```
 
 ## License
 

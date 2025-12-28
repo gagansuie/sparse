@@ -12,6 +12,8 @@ Complete API reference for Sparse integration.
 ## Table of Contents
 
 1. [Model Delta Compression](#model-delta-compression)
+   - [Adapter Delta (Optional)](#compress_adapter_delta)
+   - [INT8 Quality Validation](#validate_int8_delta_quality)
 2. [Dataset Delta Compression](#dataset-delta-compression)
 3. [Smart Routing](#smart-routing)
 4. [Cost Optimizer](#cost-optimizer)
@@ -150,6 +152,142 @@ model = reconstruct_from_delta(
 # Use model for inference
 outputs = model.generate(...)
 ```
+
+---
+
+### `compress_adapter_delta()`
+
+Package a LoRA/PEFT adapter as a delta artifact.
+
+**Note:** This is an optional feature. Adapters are treated as `delta_type: adapter` within the same delta framework. Full model deltas remain the primary feature.
+
+**Signature:**
+```python
+def compress_adapter_delta(
+    base_model_id: str,
+    adapter_id: str,
+    output_path: str,
+    progress_callback: Optional[callable] = None
+) -> DeltaManifest
+```
+
+**Parameters:**
+- `base_model_id` (str): Base model the adapter was trained on
+- `adapter_id` (str): Adapter HuggingFace ID or local path
+- `output_path` (str): Output directory for delta artifact
+- `progress_callback` (callable, optional): Progress callback(msg, progress)
+
+**Returns:** `DeltaManifest` with `delta_type="adapter"`
+
+**Example:**
+```python
+from core.delta import compress_adapter_delta, reconstruct_from_delta
+
+# Package adapter as delta artifact
+manifest = compress_adapter_delta(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    adapter_id="my-org/llama-lora-adapter",
+    output_path="./adapter_delta"
+)
+
+print(f"Delta type: {manifest.delta_type}")  # "adapter"
+print(f"Base model: {manifest.base_model_id}")
+
+# Reconstruct - automatically detects adapter type
+model = reconstruct_from_delta(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    delta_path="./adapter_delta"
+)
+# Returns model with adapter merged (or PeftModel if merge fails)
+```
+
+**CLI:**
+```bash
+sparse delta compress-adapter meta-llama/Llama-2-7b-hf my-org/llama-lora -o ./adapter_delta
+```
+
+**Requirements:** `peft` package required for reconstruction.
+
+---
+
+### `validate_int8_delta_quality()` ⚡
+
+Validate INT8 delta compression quality with real model inference.
+
+**⚡ Rust-Accelerated:** Uses Rust INT8 compression when available.
+
+**Signature:**
+```python
+def validate_int8_delta_quality(
+    base_model_id: str,
+    finetune_model_id: str,
+    sample_layers: int = 2,
+    prompts: Optional[List[str]] = None,
+    max_length: int = 128,
+) -> Dict[str, Any]
+```
+
+**Parameters:**
+- `base_model_id` (str): Base model identifier (e.g., "meta-llama/Llama-2-7b-hf")
+- `finetune_model_id` (str): Fine-tuned model identifier
+- `sample_layers` (int): Number of large layers to sample (default: 2)
+- `prompts` (List[str], optional): Test prompts for logits comparison
+- `max_length` (int): Max tokenization length (default: 128)
+
+**Returns:**
+```python
+{
+    "status": str,                    # "✅ Completed" or "❌ Error: ..."
+    "base_model": str,
+    "finetune_model": str,
+    "sample_layers_requested": int,
+    "rust_acceleration": bool,
+    "prompts": List[str],
+    "layer_metrics": [                # Per-layer reconstruction metrics
+        {
+            "name": str,              # Layer name
+            "shape": List[int],
+            "numel": int,
+            "scale": float,           # INT8 quantization scale
+            "compression_ratio": float,
+            "max_abs_error": float,   # Max reconstruction error
+            "mean_abs_error": float,  # Mean reconstruction error
+        }
+    ],
+    "logits_metrics": [               # Per-prompt logits comparison
+        {
+            "prompt": str,
+            "max_logit_diff": float,
+            "mean_logit_diff": float,
+        }
+    ],
+    "timings": {
+        "load_base_s": float,
+        "load_finetune_s": float,
+        "reload_orig_s": float,
+    },
+}
+```
+
+**Example:**
+```python
+from core.delta import validate_int8_delta_quality
+
+report = validate_int8_delta_quality(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    finetune_model_id="meta-llama/Llama-2-7b-chat-hf",
+    sample_layers=2,
+    prompts=["Hello, how are you?", "The capital of France is"],
+)
+
+print(f"Status: {report['status']}")
+for layer in report['layer_metrics']:
+    print(f"  {layer['name']}: max_err={layer['max_abs_error']:.6f}")
+for logit in report['logits_metrics']:
+    print(f"  '{logit['prompt'][:20]}...': max_diff={logit['max_logit_diff']:.4f}")
+```
+
+**Use Case:** Verify INT8 delta compression maintains acceptable quality before deploying compressed models.
 
 ---
 
@@ -454,14 +592,18 @@ if result.winner:
 ```python
 @dataclass
 class DeltaManifest:
-    base_model_id: str
-    finetune_model_id: str
-    delta_size_mb: float
-    compression_ratio: float
-    changed_layers: List[str]
-    sparsity: float
-    format: str
-    created_at: str
+    version: str = "1.0"
+    delta_type: str = "model_delta"  # "model_delta" or "adapter"
+    base_model_id: str = ""
+    finetune_model_id: str = ""
+    created_at: str = ""  # ISO timestamp
+    base_model_hash: str = ""
+    finetune_model_hash: str = ""
+    num_layers: int = 0
+    total_params: int = 0
+    changed_params: int = 0
+    compression_ratio: float = 1.0
+    layer_deltas: List[Dict] = []  # Per-layer compression info
 ```
 
 ### `DatasetDeltaStats`

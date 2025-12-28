@@ -31,6 +31,8 @@ from .allocation import (
 
 from .delta import (
     compress_delta,
+    compress_adapter_delta,
+    validate_int8_delta_quality,
     reconstruct_from_delta,
     estimate_delta_savings,
     DeltaManifest,
@@ -51,6 +53,8 @@ __all__ = [
     "LayerAllocation",
     # Delta compression
     "compress_delta",
+    "compress_adapter_delta",
+    "validate_int8_delta_quality",
     "reconstruct_from_delta",
     "estimate_delta_savings",
     "DeltaManifest",
