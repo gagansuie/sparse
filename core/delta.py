@@ -23,7 +23,6 @@ Usage:
     )
 """
 
-import os
 import json
 import torch
 import torch.nn as nn
@@ -156,7 +155,6 @@ from core.delta_rust import (
     compress_delta_int8,
     decompress_delta_int8,
     is_rust_available,
-    get_rust_info,
 )
 
 

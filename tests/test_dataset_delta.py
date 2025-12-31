@@ -41,7 +41,7 @@ class TestDatasetDeltaStats:
 class TestEstimateDatasetDeltaSavings:
     """Test dataset delta savings estimation."""
     
-    @patch("core.dataset_delta.load_dataset")
+    @patch("datasets.load_dataset")
     def test_estimate_savings_basic(self, mock_load_dataset):
         """Test basic savings estimation."""
         # Mock base dataset
@@ -86,7 +86,7 @@ class TestEstimateDatasetDeltaSavings:
 class TestCompressDatasetDelta:
     """Test dataset delta compression."""
     
-    @patch("core.dataset_delta.load_dataset")
+    @patch("datasets.load_dataset")
     @patch("builtins.open", new_callable=MagicMock)
     @patch("pathlib.Path.mkdir")
     @patch("pathlib.Path.iterdir")
@@ -159,7 +159,7 @@ class TestCompressDatasetDelta:
 class TestReconstructFromDatasetDelta:
     """Test dataset reconstruction from delta."""
     
-    @patch("core.dataset_delta.load_dataset")
+    @patch("datasets.load_dataset")
     @patch("builtins.open", new_callable=MagicMock)
     @patch("pathlib.Path.__truediv__")
     def test_reconstruct_basic(

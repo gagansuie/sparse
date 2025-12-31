@@ -33,7 +33,7 @@ class TestDeltaManifest:
 class TestEstimateDeltaSavings:
     """Test delta savings estimation."""
     
-    @patch("core.delta.AutoModelForCausalLM")
+    @patch("transformers.AutoModelForCausalLM")
     def test_estimate_savings_basic(self, mock_model_class):
         """Test basic savings estimation."""
         # Mock models
@@ -83,7 +83,7 @@ class TestEstimateDeltaSavings:
 class TestCompressDelta:
     """Test delta compression."""
     
-    @patch("core.delta.AutoModelForCausalLM")
+    @patch("transformers.AutoModelForCausalLM")
     def test_compress_delta(self, mock_model_class, tmp_path):
         """Test delta compression."""
         # Create mock models
@@ -124,7 +124,7 @@ class TestCompressDelta:
 class TestReconstructFromDelta:
     """Test reconstruction from delta."""
     
-    @patch("core.delta.AutoModelForCausalLM")
+    @patch("transformers.AutoModelForCausalLM")
     def test_reconstruct_from_delta(self, mock_model_class, tmp_path):
         """Test reconstruction from delta."""
         # Create mock base model
@@ -171,7 +171,7 @@ class TestReconstructFromDelta:
 class TestDeltaCompressionIntegration:
     """Integration tests for delta compression."""
     
-    @patch("core.delta.AutoModelForCausalLM")
+    @patch("transformers.AutoModelForCausalLM")
     def test_full_workflow(self, mock_model_class, tmp_path):
         """Test full compress and reconstruct workflow."""
         # Create mock models
