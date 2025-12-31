@@ -8,7 +8,6 @@ import argparse
 import sys
 import os
 import json
-from typing import Optional
 
 
 def cmd_pack(args):
@@ -154,8 +153,6 @@ def cmd_eval(args):
 
 def cmd_info(args):
     """Show info about a compressed artifact."""
-    from studio.storage import get_storage
-    
     if not os.path.exists(args.artifact_path):
         print(f"Error: Artifact not found: {args.artifact_path}")
         return 1

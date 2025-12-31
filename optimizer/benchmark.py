@@ -5,7 +5,6 @@ Measures latency, throughput, and memory usage for compression candidates.
 """
 
 import time
-import gc
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime

@@ -9,7 +9,7 @@ import itertools
 
 import torch
 import torch.nn as nn
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 from tqdm import tqdm
 
 

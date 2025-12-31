@@ -7,10 +7,9 @@ Suggests smaller models when quality is acceptable.
 Estimated savings: $5-10M/year for inference platforms
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
-import time
 
 
 class HardwareType(Enum):

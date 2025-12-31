@@ -10,8 +10,7 @@ Examples:
 Estimated savings: $10-15M/year for platforms like HuggingFace
 """
 
-import torch
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -208,16 +207,27 @@ def compress_dataset_delta(
             "refs_file": f"{split_name}_refs.json"
         }
     
-    # Calculate sizes
-    base_size = sum(len(str(base_dataset[split])) for split in base_dataset.keys())
-    deriv_size = sum(len(str(derivative_dataset[split])) for split in derivative_dataset.keys())
+    # Calculate sizes using actual serialized data size
+    def get_dataset_size(dataset):
+        """Estimate dataset size in bytes."""
+        total = 0
+        for split in dataset.keys():
+            for sample in dataset[split]:
+                total += len(json.dumps(sample, default=str))
+        return total
+    
+    base_size = get_dataset_size(base_dataset)
+    deriv_size = get_dataset_size(derivative_dataset)
     delta_size = sum((output_path / f).stat().st_size for f in output_path.iterdir())
+    
+    # Savings: how much smaller is delta compared to storing derivative fully
+    savings_pct = max(0, ((deriv_size - delta_size) / max(deriv_size, 1)) * 100)
     
     delta_manifest["size_stats"] = {
         "base_size_mb": base_size / (1024 * 1024),
         "derivative_size_mb": deriv_size / (1024 * 1024),
         "delta_size_mb": delta_size / (1024 * 1024),
-        "savings_pct": ((deriv_size - delta_size) / deriv_size) * 100
+        "savings_pct": savings_pct
     }
     
     # Save manifest
