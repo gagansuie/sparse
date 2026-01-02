@@ -560,121 +560,6 @@ def reconstruct_from_delta(
     return model
 
 
-def estimate_delta_savings(
-    base_model_id: str,
-    finetune_model_id: str,
-    sample_layers: int = 10,
-) -> Dict[str, float]:
-    """Estimate storage savings without full compression.
-    
-    Quick analysis by sampling a few layers. Tests each compression strategy
-    (sparse, int8, sparse+int8) and returns breakdown.
-    
-    Returns:
-        Dict with estimated compression ratio, best strategy, and per-strategy breakdown
-    """
-    from transformers import AutoModelForCausalLM
-    
-    # Load models
-    base_model = AutoModelForCausalLM.from_pretrained(
-        base_model_id,
-        torch_dtype=torch.float16,
-        device_map="cpu",
-        low_cpu_mem_usage=True,
-    )
-    
-    finetune_model = AutoModelForCausalLM.from_pretrained(
-        finetune_model_id,
-        torch_dtype=torch.float16,
-        device_map="cpu",
-        low_cpu_mem_usage=True,
-    )
-    
-    base_params = dict(base_model.named_parameters())
-    finetune_params = dict(finetune_model.named_parameters())
-    
-    # Sample layers (prefer large weight matrices)
-    param_names = [n for n in base_params.keys() if base_params[n].numel() > 10000]
-    if not param_names:
-        param_names = list(base_params.keys())
-    sample_names = param_names[::max(1, len(param_names) // sample_layers)][:sample_layers]
-    
-    # Track metrics per strategy
-    total_original_size = 0
-    total_sparse_size = 0
-    total_int8_size = 0
-    total_sparse_int8_size = 0
-    total_sparsity = 0
-    
-    for name in sample_names:
-        base_weight = base_params[name].data
-        finetune_weight = finetune_params[name].data
-        
-        if base_weight.shape != finetune_weight.shape:
-            continue
-        
-        # Compute delta
-        delta = finetune_weight - base_weight
-        original_size = delta.numel() * 2  # FP16 = 2 bytes
-        total_original_size += original_size
-        
-        # Use relative threshold based on weight magnitude
-        weight_scale = torch.abs(base_weight).mean().item()
-        relative_threshold = max(weight_scale * 0.01, 1e-6)
-        
-        # Calculate sparsity
-        sparsity = (torch.abs(delta) < relative_threshold).float().mean().item()
-        total_sparsity += sparsity
-        
-        # Strategy 1: Sparse compression
-        indices, values, _ = compress_delta_sparse(delta, threshold=relative_threshold)
-        sparse_size = indices.numel() * 4 + values.numel() * 2  # int32 indices + fp16 values
-        sparse_size = max(sparse_size, 1)  # Avoid division by zero
-        total_sparse_size += sparse_size
-        
-        # Strategy 2: INT8 compression
-        quantized_bytes, scale, _ = compress_delta_int8(delta)
-        int8_size = len(quantized_bytes) + 4  # +4 for scale
-        total_int8_size += int8_size
-        
-        # Strategy 3: Sparse + INT8 (apply sparsity first, then quantize non-zero)
-        # For sparse+int8, we only quantize the non-zero values
-        if values.numel() > 0:
-            sparse_int8_bytes, _, _ = compress_delta_int8(values)
-            sparse_int8_size = indices.numel() * 4 + len(sparse_int8_bytes) + 4
-        else:
-            sparse_int8_size = 4  # Just scale
-        total_sparse_int8_size += sparse_int8_size
-    
-    # Calculate compression ratios (cap at 1.0x minimum - can't be worse than original)
-    sparse_compression = max(total_original_size / max(total_sparse_size, 1), 1.0)
-    int8_compression = max(total_original_size / max(total_int8_size, 1), 1.0)
-    sparse_int8_compression = max(total_original_size / max(total_sparse_int8_size, 1), 1.0)
-    
-    avg_sparsity = total_sparsity / len(sample_names) if sample_names else 0
-    
-    # Determine best strategy
-    strategies = {
-        "sparse": sparse_compression,
-        "int8": int8_compression,
-        "sparse+int8": sparse_int8_compression,
-    }
-    best_strategy = max(strategies, key=strategies.get)
-    best_compression = strategies[best_strategy]
-    
-    del base_model, finetune_model
-    
-    return {
-        "estimated_compression": best_compression,
-        "best_strategy": best_strategy,
-        "avg_sparsity": avg_sparsity,
-        "sample_layers": len(sample_names),
-        "sparse_compression": sparse_compression,
-        "int8_compression": int8_compression,
-        "sparse_int8_compression": sparse_int8_compression,
-    }
-
-
 def validate_int8_delta_quality(
     base_model_id: str,
     finetune_model_id: str,
@@ -850,3 +735,334 @@ def validate_int8_delta_quality(
         result["traceback"] = traceback.format_exc()
     
     return result
+
+
+# =============================================================================
+# SVD COMPRESSION - Extract LoRA-equivalent from full fine-tunes
+# =============================================================================
+
+@dataclass
+class SVDDeltaManifest:
+    """Manifest for SVD-compressed delta artifact."""
+    version: str = "1.0"
+    delta_type: str = "svd_delta"
+    base_model_id: str = ""
+    finetune_model_id: str = ""
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    rank: int = 16
+    
+    # Statistics
+    num_layers: int = 0
+    total_params: int = 0
+    original_size_bytes: int = 0
+    compressed_size_bytes: int = 0
+    compression_ratio: float = 1.0
+    
+    # Quality metrics
+    avg_reconstruction_error: float = 0.0
+    max_reconstruction_error: float = 0.0
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "version": self.version,
+            "delta_type": self.delta_type,
+            "base_model_id": self.base_model_id,
+            "finetune_model_id": self.finetune_model_id,
+            "created_at": self.created_at,
+            "rank": self.rank,
+            "num_layers": self.num_layers,
+            "total_params": self.total_params,
+            "original_size_bytes": self.original_size_bytes,
+            "compressed_size_bytes": self.compressed_size_bytes,
+            "compression_ratio": self.compression_ratio,
+            "avg_reconstruction_error": self.avg_reconstruction_error,
+            "max_reconstruction_error": self.max_reconstruction_error,
+        }
+
+
+def compress_delta_svd(
+    delta: torch.Tensor,
+    rank: int = 16,
+) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, float]]:
+    """Compress a delta tensor using SVD (LoRA-equivalent extraction).
+    
+    Args:
+        delta: Weight delta tensor (2D)
+        rank: Target rank for compression (like LoRA rank)
+        
+    Returns:
+        (U, V, stats) where delta ≈ U @ V
+        U is (m, rank), V is (rank, n)
+    """
+    original_shape = delta.shape
+    
+    # Reshape to 2D if needed
+    if len(delta.shape) == 1:
+        delta_2d = delta.unsqueeze(0)
+    elif len(delta.shape) > 2:
+        delta_2d = delta.reshape(delta.shape[0], -1)
+    else:
+        delta_2d = delta
+    
+    m, n = delta_2d.shape
+    actual_rank = min(rank, min(m, n))
+    
+    # SVD decomposition
+    try:
+        U, S, Vh = torch.linalg.svd(delta_2d.float(), full_matrices=False)
+    except:
+        # Fallback for numerical issues
+        U, S, Vh = torch.svd(delta_2d.float())
+    
+    # Keep top-k singular values
+    U_k = U[:, :actual_rank]  # (m, rank)
+    S_k = S[:actual_rank]      # (rank,)
+    Vh_k = Vh[:actual_rank, :] # (rank, n)
+    
+    # Combine S into U for storage: U_compressed = U_k @ diag(S_k)
+    U_compressed = (U_k * S_k.unsqueeze(0)).to(torch.float16)  # (m, rank)
+    V_compressed = Vh_k.to(torch.float16)                       # (rank, n)
+    
+    # Calculate reconstruction error
+    reconstructed = U_compressed.float() @ V_compressed.float()
+    if len(original_shape) > 2:
+        reconstructed = reconstructed.reshape(original_shape)
+    elif len(original_shape) == 1:
+        reconstructed = reconstructed.squeeze(0)
+    
+    error = (delta.float() - reconstructed).abs()
+    
+    # Calculate sizes
+    original_size = delta.numel() * 2  # FP16
+    compressed_size = U_compressed.numel() * 2 + V_compressed.numel() * 2
+    
+    stats = {
+        "original_shape": original_shape,
+        "rank": actual_rank,
+        "original_size": original_size,
+        "compressed_size": compressed_size,
+        "compression_ratio": original_size / max(compressed_size, 1),
+        "mean_error": error.mean().item(),
+        "max_error": error.max().item(),
+        "relative_error": (error.mean() / (delta.abs().mean() + 1e-8)).item(),
+    }
+    
+    return U_compressed, V_compressed, stats
+
+
+def decompress_delta_svd(
+    U: torch.Tensor,
+    V: torch.Tensor,
+    original_shape: Tuple[int, ...],
+) -> torch.Tensor:
+    """Reconstruct delta from SVD factors.
+    
+    Args:
+        U: Left factor (m, rank)
+        V: Right factor (rank, n)
+        original_shape: Original tensor shape
+        
+    Returns:
+        Reconstructed delta tensor
+    """
+    reconstructed = U.float() @ V.float()
+    
+    if len(original_shape) == 1:
+        reconstructed = reconstructed.squeeze(0)
+    elif len(original_shape) > 2:
+        reconstructed = reconstructed.reshape(original_shape)
+    
+    return reconstructed.to(torch.float16)
+
+
+def compress_delta_svd_full(
+    base_model_id: str,
+    finetune_model_id: str,
+    output_path: str,
+    rank: int = 16,
+    progress_callback: Optional[callable] = None,
+) -> SVDDeltaManifest:
+    """Compress a fine-tuned model as SVD delta (LoRA-equivalent extraction).
+    
+    This extracts a LoRA-like low-rank approximation from ANY full fine-tune,
+    even if it wasn't trained with LoRA.
+    
+    Args:
+        base_model_id: HuggingFace model ID for base model
+        finetune_model_id: HuggingFace model ID or path for fine-tuned model
+        output_path: Path to save SVD delta artifact
+        rank: Target rank (like LoRA rank, default 16)
+        progress_callback: Optional callback(msg, progress)
+        
+    Returns:
+        SVDDeltaManifest with compression statistics
+    """
+    from transformers import AutoModelForCausalLM
+    
+    def log(msg: str, progress: float = 0.0):
+        if progress_callback:
+            progress_callback(msg, progress)
+        print(f"[SVD Delta] {msg}")
+    
+    log(f"Loading base model: {base_model_id}", 0.0)
+    
+    # Load base model
+    base_model = AutoModelForCausalLM.from_pretrained(
+        base_model_id,
+        torch_dtype=torch.float16,
+        device_map="cpu",
+        low_cpu_mem_usage=True,
+    )
+    
+    log(f"Loading fine-tuned model: {finetune_model_id}", 0.2)
+    
+    # Load fine-tuned model
+    finetune_model = AutoModelForCausalLM.from_pretrained(
+        finetune_model_id,
+        torch_dtype=torch.float16,
+        device_map="cpu",
+        low_cpu_mem_usage=True,
+    )
+    
+    # Create output directory
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+    svd_path = output_path / "svd_deltas"
+    svd_path.mkdir(exist_ok=True)
+    
+    base_params = dict(base_model.named_parameters())
+    finetune_params = dict(finetune_model.named_parameters())
+    
+    manifest = SVDDeltaManifest(
+        base_model_id=base_model_id,
+        finetune_model_id=finetune_model_id,
+        rank=rank,
+    )
+    
+    total_original_size = 0
+    total_compressed_size = 0
+    total_error = 0
+    max_error = 0
+    layer_count = 0
+    
+    param_names = list(base_params.keys())
+    
+    for i, name in enumerate(param_names):
+        progress = 0.3 + 0.6 * (i / len(param_names))
+        log(f"Processing {name}", progress)
+        
+        base_weight = base_params[name].data
+        finetune_weight = finetune_params[name].data
+        
+        if base_weight.shape != finetune_weight.shape:
+            continue
+        
+        manifest.total_params += base_weight.numel()
+        
+        # Compute delta
+        delta = finetune_weight - base_weight
+        
+        # Only SVD compress 2D+ weight matrices (not biases, norms)
+        if len(delta.shape) >= 2 and delta.numel() > 1000:
+            U, V, stats = compress_delta_svd(delta, rank=rank)
+            
+            # Save SVD factors
+            layer_name = name.replace(".", "_")
+            torch.save({"U": U, "V": V, "shape": delta.shape}, svd_path / f"{layer_name}.pt")
+            
+            total_original_size += stats["original_size"]
+            total_compressed_size += stats["compressed_size"]
+            total_error += stats["mean_error"]
+            max_error = max(max_error, stats["max_error"])
+            layer_count += 1
+        else:
+            # Save small tensors directly (biases, layer norms)
+            torch.save(delta, svd_path / f"{name.replace('.', '_')}_direct.pt")
+            size = delta.numel() * 2
+            total_original_size += size
+            total_compressed_size += size
+    
+    # Update manifest
+    manifest.num_layers = layer_count
+    manifest.original_size_bytes = total_original_size
+    manifest.compressed_size_bytes = total_compressed_size
+    manifest.compression_ratio = total_original_size / max(total_compressed_size, 1)
+    manifest.avg_reconstruction_error = total_error / max(layer_count, 1)
+    manifest.max_reconstruction_error = max_error
+    
+    # Save manifest
+    with open(output_path / "manifest.json", "w") as f:
+        json.dump(manifest.to_dict(), f, indent=2)
+    
+    log(f"SVD compression complete! Ratio: {manifest.compression_ratio:.1f}x", 1.0)
+    
+    # Cleanup
+    del base_model, finetune_model
+    
+    return manifest
+
+
+def reconstruct_from_svd_delta(
+    base_model_id: str,
+    delta_path: str,
+    device: str = "cuda",
+    progress_callback: Optional[callable] = None,
+):
+    """Reconstruct model from base + SVD delta.
+    
+    Args:
+        base_model_id: HuggingFace model ID for base model
+        delta_path: Path to SVD delta artifact
+        device: Target device
+        progress_callback: Optional callback(msg, progress)
+        
+    Returns:
+        Reconstructed model
+    """
+    from transformers import AutoModelForCausalLM
+    
+    def log(msg: str, progress: float = 0.0):
+        if progress_callback:
+            progress_callback(msg, progress)
+        print(f"[SVD Reconstruct] {msg}")
+    
+    delta_path = Path(delta_path)
+    
+    # Load manifest
+    with open(delta_path / "manifest.json", "r") as f:
+        manifest_dict = json.load(f)
+    
+    log(f"Loading base model: {base_model_id}", 0.0)
+    
+    # Load base model
+    model = AutoModelForCausalLM.from_pretrained(
+        base_model_id,
+        torch_dtype=torch.float16,
+        device_map=device if device != "cpu" else None,
+        low_cpu_mem_usage=True,
+    )
+    
+    svd_path = delta_path / "svd_deltas"
+    
+    log("Applying SVD deltas...", 0.5)
+    
+    for name, param in model.named_parameters():
+        layer_name = name.replace(".", "_")
+        
+        # Check for SVD delta
+        svd_file = svd_path / f"{layer_name}.pt"
+        direct_file = svd_path / f"{layer_name}_direct.pt"
+        
+        if svd_file.exists():
+            data = torch.load(svd_file, weights_only=True)
+            U, V = data["U"], data["V"]
+            original_shape = data["shape"]
+            delta = decompress_delta_svd(U, V, original_shape)
+            param.data.add_(delta.to(param.device))
+        elif direct_file.exists():
+            delta = torch.load(direct_file, weights_only=True)
+            param.data.add_(delta.to(param.device))
+    
+    log("Reconstruction complete!", 1.0)
+    
+    return model
