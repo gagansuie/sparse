@@ -1,41 +1,42 @@
 """
 Sparse Core Module
 
-Quantization orchestration, calibration, delta compression, and optimization.
+Delta compression for fine-tuned models and datasets.
 
 Usage:
-    from core import QuantizationWrapper, QUANTIZATION_PRESETS
+    from core import compress_delta, reconstruct_from_delta
     
-    # Quantize a model
-    wrapper = QuantizationWrapper.from_preset("gptq_quality")
-    quantized_model = wrapper.quantize(model_id)
+    # Compress a fine-tune as delta from base
+    manifest = compress_delta(
+        base_model_id="meta-llama/Llama-2-7b-hf",
+        finetune_model_id="my-finetune",
+        output_path="./delta"
+    )
+    
+    # Reconstruct model from base + delta
+    model = reconstruct_from_delta(
+        base_model_id="meta-llama/Llama-2-7b-hf",
+        delta_path="./delta"
+    )
 """
-
-# Quantization wrapper (recommended approach)
-from .quantization import (
-    QuantizationWrapper,
-    QuantizationConfig,
-    QuantizationMethod,
-    QUANTIZATION_PRESETS,
-)
-
-from .calibration import (
-    collect_calibration_stats,
-    compute_ppl,
-)
-
-from .allocation import (
-    allocate_bits,
-    LayerAllocation,
-)
 
 from .delta import (
     compress_delta,
     compress_adapter_delta,
     validate_int8_delta_quality,
     reconstruct_from_delta,
-    estimate_delta_savings,
     DeltaManifest,
+    # SVD compression (LoRA-equivalent extraction)
+    compress_delta_svd_full,
+    reconstruct_from_svd_delta,
+    SVDDeltaManifest,
+)
+
+from .dataset_delta import (
+    compress_dataset_delta,
+    reconstruct_from_dataset_delta,
+    estimate_dataset_delta_savings,
+    DatasetDeltaStats,
 )
 
 from .fast_reconstruct import (
@@ -44,26 +45,23 @@ from .fast_reconstruct import (
     get_global_cache,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
-    # Quantization wrapper
-    "QuantizationWrapper",
-    "QuantizationConfig",
-    "QuantizationMethod",
-    "QUANTIZATION_PRESETS",
-    # Calibration
-    "collect_calibration_stats",
-    "compute_ppl",
-    # Allocation
-    "allocate_bits",
-    "LayerAllocation",
-    # Delta compression
+    # Model delta compression (lossless)
     "compress_delta",
     "compress_adapter_delta",
     "validate_int8_delta_quality",
     "reconstruct_from_delta",
-    "estimate_delta_savings",
     "DeltaManifest",
+    # SVD compression (lossy, LoRA-equivalent)
+    "compress_delta_svd_full",
+    "reconstruct_from_svd_delta",
+    "SVDDeltaManifest",
+    # Dataset delta compression
+    "compress_dataset_delta",
+    "reconstruct_from_dataset_delta",
+    "estimate_dataset_delta_savings",
+    "DatasetDeltaStats",
     # Fast reconstruction
     "DeltaCache",
     "from_pretrained_with_delta",
