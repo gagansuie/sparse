@@ -38,15 +38,6 @@
 - Save disk space storing multiple fine-tunes
 - Works with ANY training method: full fine-tune, RLHF, merges
 
-### ⚡ Auto-Caching & Fast Reconstruction
-
-| Feature | Benefit |
-|---------|---------|
-| **Smart caching** | Reconstruct once, load instantly |
-| **Background prefetch** | Pre-load multiple deltas in parallel |
-| **HF Hub integration** | Uses existing HuggingFace cache |
-| **4-second reconstruction** | Rust-accelerated delta application |
-
 ### 📊 Dataset Delta Compression
 
 | Metric | Value |
@@ -181,7 +172,35 @@ print(f"Savings: {manifest['size_stats']['savings_pct']:.1f}%")
 dataset = reconstruct_from_dataset_delta("./squad_v2_delta")
 ```
 
-### Fast Reconstruction with Auto-Caching
+---
+
+## Why Sparse?
+
+**Post-hoc compression for ANY fine-tune.** Unlike LoRA (which requires training differently), Sparse works on models you've *already* trained.
+
+| | LoRA/PEFT | Sparse Lossless | Sparse SVD |
+|--|-----------|-----------------|------------|
+| **When** | During training | After training | After training |
+| **Size** | ~50 MB | ~1.4 GB | ~50 MB |
+| **Quality** | ~95-99% | 100% | ~95-99% |
+| **Works on existing models** | ❌ No | ✅ Yes | ✅ Yes |
+
+**Key insight:** Sparse SVD gives you LoRA-sized files from models that weren't trained with LoRA.
+
+---
+
+## Requirements
+
+- Python 3.9+
+- PyTorch 2.0+
+- transformers
+- Rust (required, included in package)
+
+---
+
+## Auto-Caching & Fast Reconstruction _(If integrated directly into HuggingFace)_
+
+**Note:** This feature is available in the codebase but requires HuggingFace Hub integration to be fully functional.
 
 ```python
 from core.fast_reconstruct import DeltaCache, from_pretrained_with_delta
@@ -212,30 +231,6 @@ cache.prefetch_deltas(
     delta_paths=["./delta1", "./delta2", "./delta3"]
 )
 ```
-
----
-
-## Why Sparse?
-
-**Post-hoc compression for ANY fine-tune.** Unlike LoRA (which requires training differently), Sparse works on models you've *already* trained.
-
-| | LoRA/PEFT | Sparse Lossless | Sparse SVD |
-|--|-----------|-----------------|------------|
-| **When** | During training | After training | After training |
-| **Size** | ~50 MB | ~1.4 GB | ~50 MB |
-| **Quality** | ~95-99% | 100% | ~95-99% |
-| **Works on existing models** | ❌ No | ✅ Yes | ✅ Yes |
-
-**Key insight:** Sparse SVD gives you LoRA-sized files from models that weren't trained with LoRA.
-
----
-
-## Requirements
-
-- Python 3.9+
-- PyTorch 2.0+
-- transformers
-- Rust (required, included in package)
 
 ---
 

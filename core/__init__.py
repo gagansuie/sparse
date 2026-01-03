@@ -45,7 +45,12 @@ from .fast_reconstruct import (
     get_global_cache,
 )
 
-__version__ = "0.1.2"
+# Import version from pyproject.toml (single source of truth)
+try:
+    from importlib.metadata import version
+    __version__ = version("sparse-llm")
+except Exception:
+    __version__ = "0.0.0"  # Fallback for development
 __all__ = [
     # Model delta compression (lossless)
     "compress_delta",
