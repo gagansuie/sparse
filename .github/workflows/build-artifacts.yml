@@ -142,17 +142,29 @@ jobs:
           path: dist/
           merge-multiple: true
       
-      - name: Get version
-        id: version
-        run: |
-          VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-      
-      - name: Create Release
+      - name: Check if release exists
+        id: check_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=${{ steps.version.outputs.version }}
+          VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Check if release already exists
+          if gh release view v$VERSION &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "⚠️  Release v$VERSION already exists - skipping"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "✓ Release v$VERSION not found - will create"
+          fi
+      
+      - name: Create Release
+        if: steps.check_release.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${{ steps.check_release.outputs.version }}
           gh release create v$VERSION \
             --title "Sparse v$VERSION" \
             --notes "## Sparse v$VERSION - Delta Compression for Fine-tuned Models

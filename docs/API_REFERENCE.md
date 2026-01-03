@@ -584,7 +584,7 @@ print("✓ Rust acceleration enabled")
 print(f"Features: {', '.join(info['features'])}")
 ```
 
-The package includes pre-built Rust binaries for all platforms (Linux, macOS, Windows).
+The package includes pre-compiled Rust extensions for all platforms (Linux, macOS, Windows), bundled in the Python wheel.
 
 ---
 
