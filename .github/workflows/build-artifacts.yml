@@ -13,6 +13,28 @@ permissions:
   id-token: write  # For PyPI trusted publishing
 
 jobs:
+  auto-tag:
+    name: Auto-create version tag
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Get version and create tag
+        run: |
+          VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
+          echo "Version: $VERSION"
+          
+          # Delete tag if it exists (locally and remote)
+          git tag -d v$VERSION 2>/dev/null || true
+          git push origin :refs/tags/v$VERSION 2>/dev/null || true
+          
+          # Create and push new tag
+          git tag v$VERSION
+          git push origin v$VERSION
+
   test:
     name: Test Python + Rust (${{ matrix.python-version }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
