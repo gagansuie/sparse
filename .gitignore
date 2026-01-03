@@ -41,3 +41,6 @@ hf_space_deploy/
 
 # Archive (old experiments - keep in git but ignore changes)
 # archive/
+
+# Private documentation (acquisition materials, not for public repo)
+private_docs/

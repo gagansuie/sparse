@@ -21,7 +21,7 @@ if os.environ.get("HF_TOKEN"):
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.delta import compress_delta, compress_adapter_delta, validate_int8_delta_quality, compress_delta_svd_full
-from core.delta_rust import is_rust_available, get_rust_info
+from core.delta_rust import get_rust_info
 
 # ==============================================================================
 # FEATURE 1: FULL DELTA COMPRESSION
@@ -46,7 +46,7 @@ def run_compression(base_model: str, finetune_model: str) -> Dict[str, Any]:
                 "changed_params": f"{manifest.changed_params:,}",
                 "change_pct": f"{100*manifest.changed_params/manifest.total_params:.1f}%",
                 "num_layers": manifest.num_layers,
-                "rust_acceleration": "✅ Yes" if is_rust_available() else "⚠️ Python fallback",
+                "rust_acceleration": "✅ Yes",
             }
     except Exception as e:
         import traceback
@@ -334,7 +334,8 @@ with gr.Blocks(title="Sparse - Delta Compression", theme=gr.themes.Soft()) as de
     | **Lossless** | 1.4 GB | 100% | When quality matters |
     | **SVD (LoRA-equiv)** | ~50 MB | ~95-99% | When size matters |
     
-    **Contact:** gagan.suie@sparselabs.ai
+    **GitHub:** https://github.com/gagansuie/sparse  
+    **License:** Apache 2.0
     """)
 
 if __name__ == "__main__":

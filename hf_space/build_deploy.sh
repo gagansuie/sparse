@@ -24,13 +24,14 @@ cp "$SCRIPT_DIR/.gitignore" "$OUTPUT_DIR/"
 
 # Copy actual directories from main project
 cp -r "$PROJECT_ROOT/core" "$OUTPUT_DIR/core"
-cp -r "$PROJECT_ROOT/optimizer" "$OUTPUT_DIR/optimizer"
-cp -r "$PROJECT_ROOT/rust" "$OUTPUT_DIR/rust"
+cp -r "$PROJECT_ROOT/cli" "$OUTPUT_DIR/cli"
+cp -r "$PROJECT_ROOT/src" "$OUTPUT_DIR/src"
+cp "$PROJECT_ROOT/Cargo.toml" "$OUTPUT_DIR/Cargo.toml"
 
 # Clean up
 rm -rf "$OUTPUT_DIR/core/__pycache__"
-rm -rf "$OUTPUT_DIR/optimizer/__pycache__"
-rm -rf "$OUTPUT_DIR/rust/target"
+rm -rf "$OUTPUT_DIR/cli/__pycache__"
+rm -rf "$OUTPUT_DIR/target"
 
 echo "✅ Deployment package ready at: $OUTPUT_DIR"
 echo ""

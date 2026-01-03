@@ -10,7 +10,6 @@ from unittest.mock import Mock, patch
 from core.delta import (
     compress_delta,
     reconstruct_from_delta,
-    estimate_delta_savings,
     DeltaManifest,
     compress_adapter_delta,
 )

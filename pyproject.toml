@@ -1,18 +1,18 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
 
 [project]
-name = "sparse"
-version = "0.1.1"
-description = "Delta compression for LLM fine-tunes + smart routing system for model hubs - $30-45M/year savings"
+name = "sparse-llm"
+version = "0.2.0"
+description = "Delta compression for LLM fine-tunes - lossless or LoRA-equivalent SVD compression"
 readme = "README.md"
-license = {text = "Proprietary"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
 authors = [
-    {name = "Sparse Labs", email = "gagan.suie@sparselabs.ai"}
+    {name = "Gagan Suie", email = "singhga029@gmail.com"}
 ]
-keywords = ["llm", "delta-compression", "model-optimization", "fine-tuning", "model-hub", "smart-routing", "dataset-delta"]
+keywords = ["llm", "delta-compression", "model-optimization", "fine-tuning", "lora", "svd"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Rust",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
@@ -29,6 +30,7 @@ dependencies = [
     "transformers>=4.30.0",
     "datasets>=2.14.0",
     "tqdm>=4.65.0",
+    "numpy>=1.21.0",
 ]
 
 [project.optional-dependencies]
@@ -37,19 +39,19 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.0.280",
 ]
-all = ["sparse[dev]"]
 
 [project.scripts]
 sparse = "cli.main:main"
 
 [project.urls]
-Homepage = "https://sparselabs.ai"
+Homepage = "https://github.com/gagansuie/sparse"
 Documentation = "https://github.com/gagansuie/sparse#readme"
 Repository = "https://github.com/gagansuie/sparse"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["core", "core.*", "cli", "cli.*", "optimizer", "optimizer.*"]
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "."
+module-name = "sparse_core"
 
 [tool.black]
 line-length = 100

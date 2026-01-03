@@ -1,21 +1,20 @@
-name: Build Proprietary Package
-
-# IMPORTANT: This builds PROPRIETARY software for sale to HuggingFace
-# NOT for public distribution or PyPI
+name: Build, Test & Publish
 
 on:
   push:
     branches: [main]
     tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write  # Required for creating releases
-  packages: write
+  contents: write
+  id-token: write  # For PyPI trusted publishing
 
 jobs:
   test:
-    name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})
+    name: Test Python + Rust (${{ matrix.python-version }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -29,88 +28,27 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
-      
-      - name: Install lightweight dependencies
-        run: |
-          # Install package without heavy ML dependencies
-          pip install --no-deps -e .
-          pip install pytest black ruff tqdm
-      
-      - name: Run lightweight tests
-        run: |
-          python scripts/test_ci.py
-  
-  test-rust:
-    name: Test Rust Acceleration (Python ${{ matrix.python-version }} on ${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ['3.9', '3.10', '3.11']
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Free up disk space (Ubuntu only)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          df -h
       
       - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-action@stable
       
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: 'pip'
-      
-      - name: Create virtual environment
+      - name: Install maturin and build
         run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> $GITHUB_ENV
-          echo "$VIRTUAL_ENV/bin" >> $GITHUB_PATH
-      
-      - name: Install maturin
-        run: |
-          source .venv/bin/activate
-          pip install maturin
-      
-      - name: Build Rust extension
-        run: |
-          source .venv/bin/activate
-          cd rust/
+          pip install maturin pytest numpy
           maturin develop --release
       
-      - name: Install Python dependencies
+      - name: Run tests
         run: |
-          source .venv/bin/activate
-          pip install --no-deps -e .
-          pip install pytest numpy torch tqdm transformers datasets
-      
-      - name: Test Rust integration
-        run: |
-          source .venv/bin/activate
+          python scripts/test_ci.py
           pytest tests/test_rust_integration.py -v
-      
-      - name: Benchmark Rust vs Python
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
-        run: |
-          source .venv/bin/activate
-          python benchmarks/bench_rust_vs_python.py
 
   build:
-    name: Build Package
-    runs-on: ubuntu-latest
-    needs: [test]
-    # Rust tests are optional - don't block builds if they fail
+    name: Build wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       
@@ -119,134 +57,82 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Install build tools
-        run: pip install build twine
-      
-      - name: Build Python package
-        run: python -m build
-      
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
         with:
-          toolchain: stable
-          override: true
+          command: build
+          args: --release --out dist
       
-      - name: Build Rust extension wheel
-        run: |
-          pip install maturin
-          cd rust/
-          maturin build --release
-          cp target/wheels/*.whl ../dist/
-      
-      - name: Check packages
-        run: twine check dist/*
-      
-      - name: Upload artifacts
+      - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: python-package
-          path: dist/
+          name: wheels-${{ matrix.os }}
+          path: dist/*.whl
 
-  build-deliverables:
-    name: Build Deliverables Package for Client
+  publish-pypi:
+    name: Publish to PyPI
     runs-on: ubuntu-latest
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: pypi
+      url: https://pypi.org/project/sparse-llm/
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist/
+          merge-multiple: true
+      
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, publish-pypi]
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
       
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
         with:
-          python-version: '3.11'
+          pattern: wheels-*
+          path: dist/
+          merge-multiple: true
       
-      - name: Get version from pyproject.toml
-        id: get_version
+      - name: Get version
+        id: version
         run: |
           VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION"
       
-      - name: Download package artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: python-package
-          path: dist/
-      
-      - name: Build deliverables package
-        run: |
-          VERSION=${{ steps.get_version.outputs.version }}
-          mkdir -p sparse-v$VERSION
-          
-          # Copy essentials only
-          cp -r core sparse-v$VERSION/
-          cp -r optimizer sparse-v$VERSION/
-          cp -r cli sparse-v$VERSION/
-          cp -r rust sparse-v$VERSION/
-          cp -r dist sparse-v$VERSION/
-          cp -r docs sparse-v$VERSION/
-          cp pyproject.toml sparse-v$VERSION/
-          cp README.md sparse-v$VERSION/
-          cp LICENSE sparse-v$VERSION/
-          cp requirements.txt sparse-v$VERSION/
-          
-          # Create tarball
-          tar -czf sparse-v$VERSION.tar.gz sparse-v$VERSION/
-      
-      - name: Upload deliverables
-        uses: actions/upload-artifact@v4
-        with:
-          name: sparse-v${{ steps.get_version.outputs.version }}
-          path: sparse-v${{ steps.get_version.outputs.version }}.tar.gz
-          retention-days: 90
-          overwrite: true
-      
-      - name: Update or create release
+      - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=${{ steps.get_version.outputs.version }}
-          
-          # Delete existing release if it exists
-          gh release delete v$VERSION --yes 2>/dev/null || true
-          
-          # Create new release
+          VERSION=${{ steps.version.outputs.version }}
           gh release create v$VERSION \
             --title "Sparse v$VERSION" \
-            --notes "## Sparse - Delta Compression for LLM Model Hubs
+            --notes "## Sparse v$VERSION - Delta Compression for Fine-tuned Models
           
-          **⚠️ PROPRIETARY SOFTWARE** - For authorized clients only
-          
-          ### Installation
+          ### Install
           \`\`\`bash
-          # Extract and install
-          tar -xzf sparse-v$VERSION.tar.gz
-          cd sparse-v$VERSION
-          pip install dist/sparse-*.whl
+          pip install sparse-llm
           \`\`\`
           
-          ### Contents
-          - Python library source code (core/, optimizer/, cli/)
-          - Rust acceleration source (rust/)
-          - Pre-built wheels (Python + Rust)
-          - Configuration and dependencies
+          ### What's New
+          See [CHANGELOG.md](CHANGELOG.md) for details.
           
-          ### Installation Options
-          \`\`\`bash
-          # Option 1: Python only (works everywhere)
-          pip install dist/sparse-*.whl
+          ### Links
+          - [PyPI](https://pypi.org/project/sparse-llm/$VERSION/)
+          - [Documentation](https://github.com/gagansuie/sparse#readme)
           
-          # Option 2: With Rust acceleration (10-20x faster)
-          pip install dist/sparse-*.whl
-          pip install dist/sparse_core-*.whl
-          \`\`\`
-          
-          ### Build Info
-          - **Commit:** ${{ github.sha }}
-          - **Branch:** ${{ github.ref_name }}
-          - **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          
-          ### Contact
-          **Sparse Labs**  
-          Email: gagan.suie@sparselabs.ai
+          ---
+          Apache 2.0 License
           " \
-            sparse-v$VERSION.tar.gz
+            dist/*.whl

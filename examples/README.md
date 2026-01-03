@@ -113,8 +113,7 @@ delta/
 ```bash
 pip install -r requirements.txt
 
-# Optional: Rust acceleration (10-20x faster)
-cd rust && cargo build --release
+# Rust acceleration is included automatically in the package
 ```
 
 ## Next Steps

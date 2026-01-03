@@ -51,12 +51,11 @@ print("\n[3/7] Testing Python fast_reconstruct module...")
 try:
     from core.fast_reconstruct import (
         DeltaCache,
-        is_rust_available,
         benchmark_reconstruction,
         from_pretrained_with_delta,
     )
     print(f"  ✅ fast_reconstruct module loaded")
-    print(f"  Rust available: {is_rust_available()}")
+    print(f"  Rust acceleration: ✅ Required and enabled")
 except ImportError as e:
     print(f"  ❌ Failed to import fast_reconstruct: {e}")
     exit(1)

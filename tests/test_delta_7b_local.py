@@ -16,7 +16,7 @@ import time
 import torch
 from pathlib import Path
 from transformers import AutoModelForCausalLM
-from core.delta import compress_delta, reconstruct_from_delta, estimate_delta_savings
+from core.delta import compress_delta, reconstruct_from_delta
 
 def test_delta_compression_7b():
     """Test delta compression on Llama-2-7B simulated fine-tune."""
@@ -146,18 +146,12 @@ def test_delta_compression_7b():
     print("[3/3] Checking Rust acceleration...")
     print()
     
-    try:
-        from core.delta_rust import is_rust_available
-        
-        if is_rust_available():
-            print("  ✅ Rust acceleration: AVAILABLE")
-            print("     Expected speedup: 10-20x on compression operations")
-        else:
-            print("  ⚠️  Rust acceleration: NOT AVAILABLE")
-            print("     Falling back to Python implementation")
-    except ImportError:
-        print("  ⚠️  Rust acceleration: NOT AVAILABLE")
-        print("     Falling back to Python implementation")
+    from core.delta_rust import get_rust_info
+    
+    info = get_rust_info()
+    print("  ✅ Rust acceleration: REQUIRED AND ENABLED")
+    print(f"     Features: {', '.join(info['features'])}")
+    print("     Expected speedup: 10-20x on compression operations")
     
     print()
     print("=" * 80)

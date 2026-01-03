@@ -18,12 +18,12 @@ RUN rustc --version && cargo --version
 WORKDIR /app
 
 # Copy source code
-# NOTE: For HF Spaces, core/ and optimizer/ must be synced from main project before deploy
+# NOTE: For HF Spaces, core/, cli/, and src/ must be synced from main project before deploy
 COPY . .
 
-# Install maturin and build Rust extension
+# Install maturin and build Rust extension (Rust source is at root level)
 RUN pip install --no-cache-dir "maturin>=1.0,<2.0"
-RUN cd rust && maturin build --release --out /app/wheels && ls -la /app/wheels/
+RUN maturin build --release --out /app/wheels && ls -la /app/wheels/
 
 # Install Rust wheel and verify
 RUN pip install --no-cache-dir /app/wheels/sparse_core-*.whl

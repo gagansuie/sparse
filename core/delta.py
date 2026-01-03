@@ -154,7 +154,6 @@ from core.delta_rust import (
     decompress_delta_sparse,
     compress_delta_int8,
     decompress_delta_int8,
-    is_rust_available,
 )
 
 
@@ -585,10 +584,6 @@ def validate_int8_delta_quality(
     import time
     import gc
     from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
-    try:
-        from core.delta_rust import is_rust_available
-    except ImportError:
-        from .delta_rust import is_rust_available
     
     if prompts is None:
         prompts = ["Hello, how are you?", "The capital of France is"]
@@ -598,7 +593,7 @@ def validate_int8_delta_quality(
         "base_model": base_model_id,
         "finetune_model": finetune_model_id,
         "sample_layers_requested": sample_layers,
-        "rust_acceleration": is_rust_available(),
+        "rust_acceleration": True,  # Rust is always enabled
         "prompts": prompts,
         "layer_metrics": [],
         "logits_metrics": [],
