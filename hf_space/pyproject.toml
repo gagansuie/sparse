@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sparse"
-version = "0.1.1"
+version = "0.1.2"
 description = "Delta compression for LLM fine-tunes + smart routing system for model hubs - $30-45M/year savings"
 readme = "README.md"
 license = {text = "Apache-2.0"}
