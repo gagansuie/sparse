@@ -127,11 +127,11 @@ def cmd_delta_reconstruct(args):
     return 0
 
 
-def cmd_svd_compress(args):
-    """Compress fine-tune as SVD delta (LoRA-equivalent extraction)."""
+def cmd_compress_lossy(args):
+    """Compress fine-tune with lossy compression (LoRA-equivalent quality)."""
     from core.delta import compress_delta_svd_full
     
-    print(f"Sparse SVD Compress (LoRA-equivalent extraction)")
+    print(f"Sparse Compress (Lossy)")
     print(f"  Base model:     {args.base_model}")
     print(f"  Fine-tune:      {args.finetune_model}")
     print(f"  Rank:           {args.rank}")
@@ -156,7 +156,7 @@ def cmd_svd_compress(args):
     
     print()
     print("=" * 60)
-    print("SVD DELTA COMPRESSION RESULTS")
+    print("LOSSY COMPRESSION RESULTS")
     print("=" * 60)
     print(f"  Base model:       {manifest.base_model_id}")
     print(f"  Fine-tune:        {manifest.finetune_model_id}")
@@ -172,11 +172,11 @@ def cmd_svd_compress(args):
     return 0
 
 
-def cmd_svd_reconstruct(args):
-    """Reconstruct model from base + SVD delta."""
+def cmd_reconstruct_lossy(args):
+    """Reconstruct model from lossy-compressed delta."""
     from core.delta import reconstruct_from_svd_delta
     
-    print(f"Sparse SVD Reconstruct")
+    print(f"Sparse Reconstruct (Lossy)")
     print(f"  Base model:     {args.base_model}")
     print(f"  Delta path:     {args.delta_path}")
     print()
@@ -197,11 +197,11 @@ def cmd_svd_reconstruct(args):
     
     print()
     print("=" * 60)
-    print("SVD RECONSTRUCTION COMPLETE")
+    print("LOSSY RECONSTRUCTION COMPLETE")
     print("=" * 60)
     print(f"  Model loaded and ready for inference")
     print(f"  Parameters: {sum(p.numel() for p in model.parameters()):,}")
-    print(f"  Note: This is a LOSSY reconstruction (LoRA-equivalent)")
+    print(f"  Note: This is a lossy reconstruction (LoRA-equivalent quality)")
     
     if args.output:
         print(f"  Saving to: {args.output}")
@@ -355,21 +355,21 @@ QUICK START
   # Reconstruct from delta
   sparse reconstruct meta-llama/Llama-3.1-8B ./my-delta -o ./reconstructed
 
-  # SVD compression (LoRA-style, ~50MB output)
-  sparse svd-compress meta-llama/Llama-3.1-8B ./my-finetune -o ./svd-delta --rank 64
+  # Lossy compression (~50MB output, LoRA-equivalent quality)
+  sparse compress-lossy meta-llama/Llama-3.1-8B ./my-finetune -o ./lossy-delta --rank 64
 
 --------------------------------------------------------------------------------
 COMMANDS
 --------------------------------------------------------------------------------
 
   MODEL COMPRESSION:
-    compress          Compress fine-tune as delta from base model
+    compress          Compress fine-tune as delta from base (lossless)
+    compress-lossy    Compress with lossy compression (~50MB output)
     compress-adapter  Package a PEFT/LoRA adapter as delta
-    svd-compress      Extract LoRA-equivalent via SVD (~50MB output)
 
   RECONSTRUCTION:
-    reconstruct       Reconstruct model from base + delta
-    svd-reconstruct   Reconstruct from base + SVD delta
+    reconstruct       Reconstruct model from lossless delta
+    reconstruct-lossy Reconstruct model from lossy delta
 
   DATASET COMPRESSION:
     dataset-compress     Compress derivative dataset as delta
@@ -387,8 +387,8 @@ EXAMPLES
   # Compress Llama fine-tune
   sparse compress meta-llama/Llama-3.1-8B ./my-llama-finetune -o ./llama-delta
 
-  # Compress with SVD (smaller, lossy)
-  sparse svd-compress meta-llama/Llama-3.1-8B ./my-finetune -o ./svd-delta --rank 64
+  # Lossy compression (smaller, ~95-99% quality)
+  sparse compress-lossy meta-llama/Llama-3.1-8B ./my-finetune -o ./lossy-delta --rank 64
 
   # Check delta info
   sparse info ./llama-delta
@@ -402,7 +402,7 @@ MORE HELP
 
   sparse <command> --help    Show help for specific command
   sparse compress --help     Show compress options
-  sparse svd-compress --help Show SVD compression options
+  sparse compress-lossy --help  Show lossy compression options
 
 ================================================================================
     GitHub: https://github.com/gagansuie/sparse
@@ -454,27 +454,27 @@ def main():
     reconstruct_parser.add_argument("--output", "-o", help="Save reconstructed model to path")
     
     # ==========================================================================
-    # SVD DELTA COMMANDS (LoRA-equivalent extraction)
+    # LOSSY COMPRESSION COMMANDS (~50MB output, LoRA-equivalent quality)
     # ==========================================================================
     
-    # sparse svd-compress <base> <finetune> -o <output> [--rank N]
-    svd_compress_parser = subparsers.add_parser(
-        "svd-compress",
-        help="Extract LoRA-equivalent from full fine-tune (lossy, ~50MB)"
+    # sparse compress-lossy <base> <finetune> -o <output> [--rank N]
+    compress_lossy_parser = subparsers.add_parser(
+        "compress-lossy",
+        help="Compress fine-tune with lossy compression (~50MB, LoRA-equivalent quality)"
     )
-    svd_compress_parser.add_argument("base_model", help="Base model ID")
-    svd_compress_parser.add_argument("finetune_model", help="Fine-tuned model ID or path")
-    svd_compress_parser.add_argument("--output", "-o", required=True, help="Output directory")
-    svd_compress_parser.add_argument("--rank", "-r", type=int, default=16, help="SVD rank (like LoRA rank, default 16)")
+    compress_lossy_parser.add_argument("base_model", help="Base model ID")
+    compress_lossy_parser.add_argument("finetune_model", help="Fine-tuned model ID or path")
+    compress_lossy_parser.add_argument("--output", "-o", required=True, help="Output directory")
+    compress_lossy_parser.add_argument("--rank", "-r", type=int, default=16, help="Compression rank (default 16, higher = better quality)")
     
-    # sparse svd-reconstruct <base> <delta> [-o <output>]
-    svd_reconstruct_parser = subparsers.add_parser(
-        "svd-reconstruct",
-        help="Reconstruct model from base + SVD delta (lossy)"
+    # sparse reconstruct-lossy <base> <delta> [-o <output>]
+    reconstruct_lossy_parser = subparsers.add_parser(
+        "reconstruct-lossy",
+        help="Reconstruct model from lossy-compressed delta"
     )
-    svd_reconstruct_parser.add_argument("base_model", help="Base model ID")
-    svd_reconstruct_parser.add_argument("delta_path", help="Path to SVD delta artifact")
-    svd_reconstruct_parser.add_argument("--output", "-o", help="Save reconstructed model to path")
+    reconstruct_lossy_parser.add_argument("base_model", help="Base model ID")
+    reconstruct_lossy_parser.add_argument("delta_path", help="Path to lossy delta artifact")
+    reconstruct_lossy_parser.add_argument("--output", "-o", help="Save reconstructed model to path")
     
     # ==========================================================================
     # DATASET DELTA COMMANDS
@@ -538,8 +538,8 @@ def main():
         "compress": cmd_delta_compress,
         "compress-adapter": cmd_delta_compress_adapter,
         "reconstruct": cmd_delta_reconstruct,
-        "svd-compress": cmd_svd_compress,
-        "svd-reconstruct": cmd_svd_reconstruct,
+        "compress-lossy": cmd_compress_lossy,
+        "reconstruct-lossy": cmd_reconstruct_lossy,
         "dataset-compress": cmd_dataset_compress,
         "dataset-reconstruct": cmd_dataset_reconstruct,
         "dataset-estimate": cmd_dataset_estimate,
