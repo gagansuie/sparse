@@ -11,7 +11,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org)
-[![Rust](https://img.shields.io/badge/Rust-Optional-orange.svg)](https://rustlang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://rustlang.org)
 
 [Quick Start](#quick-start) • [How It Works](#how-it-works) • [CLI](#cli) • [Python API](#python-api)
 
@@ -38,7 +38,7 @@
 - Save disk space storing multiple fine-tunes
 - Works with ANY training method: full fine-tune, RLHF, merges
 
-### � Auto-Caching & Fast Reconstruction
+### ⚡ Auto-Caching & Fast Reconstruction
 
 | Feature | Benefit |
 |---------|---------|
@@ -47,7 +47,7 @@
 | **HF Hub integration** | Uses existing HuggingFace cache |
 | **4-second reconstruction** | Rust-accelerated delta application |
 
-### �📊 Dataset Delta Compression
+### 📊 Dataset Delta Compression
 
 | Metric | Value |
 |--------|-------|
