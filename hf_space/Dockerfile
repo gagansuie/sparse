@@ -21,7 +21,7 @@ WORKDIR /app
 # NOTE: For HF Spaces, core/, cli/, and src/ must be synced from main project before deploy
 COPY . .
 
-# Install maturin and build Rust extension (Rust source is at root level)
+# Install maturin and build package with Rust acceleration (Rust source is at root level)
 RUN pip install --no-cache-dir "maturin>=1.0,<2.0"
 RUN maturin build --release --out /app/wheels && ls -la /app/wheels/
 
