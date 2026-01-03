@@ -52,6 +52,7 @@ Repository = "https://github.com/gagansuie/sparse"
 features = ["pyo3/extension-module"]
 python-source = "."
 module-name = "sparse_core"
+python-packages = ["core", "cli"]
 
 [tool.black]
 line-length = 100
