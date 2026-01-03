@@ -30,7 +30,7 @@ jobs:
           cache: 'pip'
       
       - name: Set up Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
       
       - name: Install maturin and build
         run: |
