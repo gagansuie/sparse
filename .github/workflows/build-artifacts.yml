@@ -84,9 +84,25 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Create and push version tag
+      - name: Check if version exists on PyPI
+        id: check_version
         run: |
           VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Check if version exists on PyPI
+          if pip index versions sparse-llm 2>/dev/null | grep -q "$VERSION"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "⚠️  Version $VERSION already exists on PyPI - skipping publish"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "✓ Version $VERSION not found on PyPI - will publish"
+          fi
+      
+      - name: Create and push version tag
+        if: steps.check_version.outputs.exists == 'false'
+        run: |
+          VERSION=${{ steps.check_version.outputs.version }}
           echo "Version: v$VERSION"
           
           # Delete tag if it exists (locally and remote)
@@ -98,6 +114,7 @@ jobs:
           git push origin v$VERSION
       
       - name: Download all wheels
+        if: steps.check_version.outputs.exists == 'false'
         uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
@@ -105,6 +122,7 @@ jobs:
           merge-multiple: true
       
       - name: Publish to PyPI
+        if: steps.check_version.outputs.exists == 'false'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
