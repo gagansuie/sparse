@@ -34,8 +34,9 @@ jobs:
       
       - name: Install dependencies and build
         run: |
-          pip install maturin pytest numpy
-          pip install . --no-build-isolation
+          pip install maturin pytest numpy torch --index-url https://download.pytorch.org/whl/cpu
+          pip install . --no-build-isolation --no-deps
+          pip install transformers datasets tqdm
       
       - name: Run tests
         run: |
