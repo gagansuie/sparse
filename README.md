@@ -59,8 +59,8 @@ pip install sparse-llm
 # Lossless compression (~1.4GB for 7B model)
 sparse compress meta-llama/Llama-2-7b-hf ./my-finetune -o ./my-delta
 
-# OR: SVD compression (~50MB, LoRA-equivalent quality)
-sparse svd-compress meta-llama/Llama-2-7b-hf ./my-finetune -o ./my-delta --rank 16
+# OR: Lossy compression (~50MB, LoRA-equivalent quality)
+sparse compress-lossy meta-llama/Llama-2-7b-hf ./my-finetune -o ./my-delta --rank 16
 ```
 
 ### Reconstruct from Delta
@@ -69,8 +69,8 @@ sparse svd-compress meta-llama/Llama-2-7b-hf ./my-finetune -o ./my-delta --rank 
 # From lossless delta
 sparse reconstruct meta-llama/Llama-2-7b-hf ./my-delta -o ./reconstructed-model
 
-# From SVD delta
-sparse svd-reconstruct meta-llama/Llama-2-7b-hf ./my-delta -o ./reconstructed-model
+# From lossy delta
+sparse reconstruct-lossy meta-llama/Llama-2-7b-hf ./my-delta -o ./reconstructed-model
 ```
 
 ### Dataset Delta
@@ -111,9 +111,9 @@ Fine-tuned Model (14GB)  -  Base Model (14GB)  =  Delta
 sparse compress <base> <finetune> -o <output>
 sparse reconstruct <base> <delta> [-o <output>]
 
-# SVD compression (LoRA-equivalent, ~50MB)
-sparse svd-compress <base> <finetune> -o <output> [--rank 16]
-sparse svd-reconstruct <base> <delta> [-o <output>]
+# Lossy compression (~50MB, LoRA-equivalent quality)
+sparse compress-lossy <base> <finetune> -o <output> [--rank 16]
+sparse reconstruct-lossy <base> <delta> [-o <output>]
 
 # Adapter packaging
 sparse compress-adapter <base> <adapter> -o <output>
@@ -143,7 +143,7 @@ manifest = compress_delta(
 )
 print(f"Compression: {manifest.compression_ratio:.1f}x")  # ~10x
 
-# SVD compression (LoRA-equivalent)
+# Extract LoRA (lossy, LoRA-equivalent)
 manifest = compress_delta_svd_full(
     base_model_id="meta-llama/Llama-2-7b-hf",
     finetune_model_id="./my-finetune",
@@ -155,8 +155,8 @@ print(f"Compression: {manifest.compression_ratio:.1f}x")  # ~280x
 # Reconstruct (lossless)
 model = reconstruct_from_delta("meta-llama/Llama-2-7b-hf", "./my-delta")
 
-# Reconstruct (SVD)
-model = reconstruct_from_svd_delta("meta-llama/Llama-2-7b-hf", "./my-svd-delta")
+# Reconstruct from extracted LoRA
+model = reconstruct_from_svd_delta("meta-llama/Llama-2-7b-hf", "./my-lora-delta")
 ```
 
 ### Dataset API
@@ -178,14 +178,14 @@ dataset = reconstruct_from_dataset_delta("./squad_v2_delta")
 
 **Post-hoc compression for ANY fine-tune.** Unlike LoRA (which requires training differently), Sparse works on models you've *already* trained.
 
-| | LoRA/PEFT | Sparse Lossless | Sparse SVD |
+| | LoRA/PEFT | Sparse Lossless | Sparse Lossy |
 |--|-----------|-----------------|------------|
 | **When** | During training | After training | After training |
 | **Size** | ~50 MB | ~1.4 GB | ~50 MB |
 | **Quality** | ~95-99% | 100% | ~95-99% |
 | **Works on existing models** | ❌ No | ✅ Yes | ✅ Yes |
 
-**Key insight:** Sparse SVD gives you LoRA-sized files from models that weren't trained with LoRA.
+**Key insight:** Sparse `compress-lossy` gives you LoRA-sized files from models that weren't trained with LoRA.
 
 ---
 

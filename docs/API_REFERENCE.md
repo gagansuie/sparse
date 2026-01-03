@@ -9,7 +9,7 @@ Complete API reference for Sparse integration.
 ## Table of Contents
 
 1. [Model Delta Compression (Lossless)](#model-delta-compression-lossless)
-2. [SVD Compression (LoRA-equivalent)](#svd-compression-lora-equivalent)
+2. [Lossy Compression](#lossy-compression)
 3. [Adapter Packaging](#adapter-packaging)
 4. [Dataset Delta Compression](#dataset-delta-compression)
 5. [Data Types](#data-types)
@@ -164,11 +164,11 @@ for layer in report['layer_metrics']:
 
 ---
 
-## SVD Compression (LoRA-equivalent)
+## Lossy Compression
 
 ### `compress_delta_svd_full()`
 
-Extract LoRA-equivalent from ANY full fine-tune using SVD decomposition.
+Compress a fine-tune with lossy compression (LoRA-equivalent quality).
 
 **This is lossy compression** (~95-99% quality) but achieves LoRA-sized files (~50MB for 7B models).
 
@@ -210,7 +210,7 @@ print(f"Avg error: {manifest.avg_reconstruction_error:.6f}")
 
 **CLI:**
 ```bash
-sparse svd-compress meta-llama/Llama-2-7b-hf my-org/llama-chat -o ./my-svd-delta --rank 16
+sparse compress-lossy meta-llama/Llama-2-7b-hf my-org/llama-chat -o ./my-lossy-delta --rank 16
 ```
 
 **Rank vs Quality:**
@@ -226,7 +226,7 @@ sparse svd-compress meta-llama/Llama-2-7b-hf my-org/llama-chat -o ./my-svd-delta
 
 ### `reconstruct_from_svd_delta()`
 
-Reconstruct model from base + SVD delta. **This is lossy reconstruction.**
+Reconstruct model from lossy-compressed delta. **This is lossy reconstruction.**
 
 **Signature:**
 ```python
@@ -261,7 +261,7 @@ outputs = model.generate(...)
 
 **CLI:**
 ```bash
-sparse svd-reconstruct meta-llama/Llama-2-7b-hf ./my-svd-delta -o ./reconstructed-model
+sparse reconstruct-lossy meta-llama/Llama-2-7b-hf ./my-lossy-delta -o ./reconstructed-model
 ```
 
 ---
@@ -479,9 +479,10 @@ class DatasetDeltaStats:
 
 ## Compression Mode Comparison
 
-| Feature | Lossless | SVD |
+| Feature | Lossless | Lossy |
 |---------|----------|-----|
 | **Function** | `compress_delta()` | `compress_delta_svd_full()` |
+| **CLI** | `sparse compress` | `sparse compress-lossy` |
 | **Size (7B)** | ~1.4 GB | ~50 MB |
 | **Quality** | 100% | ~95-99% |
 | **Use Case** | Production, quality-critical | Sharing, size-critical |
