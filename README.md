@@ -4,11 +4,11 @@
 
 **Delta Compression for Fine-tuned Models and Datasets**
 
-> Compress your 13GB fine-tune to 1.4GB (lossless) or 50MB (LoRA-equivalent). Reconstruct in 4 seconds.
+> Compress your 14GB fine-tune to 1.4GB (lossless) or 50MB (LoRA-equivalent). Reconstruct in 4 seconds.
 
 **Verified**: GPT-2 compression → reconstruction → **identical inference output** ✅
 
-[![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org)
 [![Rust](https://img.shields.io/badge/Rust-Optional-orange.svg)](https://rustlang.org)
@@ -38,7 +38,16 @@
 - Save disk space storing multiple fine-tunes
 - Works with ANY training method: full fine-tune, RLHF, merges
 
-### 📊 Dataset Delta Compression
+### � Auto-Caching & Fast Reconstruction
+
+| Feature | Benefit |
+|---------|---------|
+| **Smart caching** | Reconstruct once, load instantly |
+| **Background prefetch** | Pre-load multiple deltas in parallel |
+| **HF Hub integration** | Uses existing HuggingFace cache |
+| **4-second reconstruction** | Rust-accelerated delta application |
+
+### �📊 Dataset Delta Compression
 
 | Metric | Value |
 |--------|-------|
@@ -50,7 +59,7 @@
 ## Quick Start
 
 ```bash
-pip install sparse-ml
+pip install sparse-llm
 ```
 
 ### Compress a Fine-tune
@@ -88,7 +97,7 @@ sparse dataset-reconstruct ./squad_v2_delta
 ## How It Works
 
 ```
-Fine-tuned Model (13GB)  -  Base Model (13GB)  =  Delta
+Fine-tuned Model (14GB)  -  Base Model (14GB)  =  Delta
                                     ↓
                     Lossless: 1.4GB  |  SVD: 50MB
                                     ↓
@@ -172,6 +181,38 @@ print(f"Savings: {manifest['size_stats']['savings_pct']:.1f}%")
 dataset = reconstruct_from_dataset_delta("./squad_v2_delta")
 ```
 
+### Fast Reconstruction with Auto-Caching
+
+```python
+from core.fast_reconstruct import DeltaCache, from_pretrained_with_delta
+
+# Create cache (reconstructed models stored in ~/.cache/sparse)
+cache = DeltaCache()
+
+# Reconstruct and cache - only takes time once!
+model_path = cache.get_or_reconstruct(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    delta_path="./my-delta",
+    background=False  # Wait for completion
+)
+
+# Load model from cache
+from transformers import AutoModelForCausalLM
+model = AutoModelForCausalLM.from_pretrained(model_path)
+
+# Or use drop-in replacement for from_pretrained
+model = from_pretrained_with_delta(
+    "./my-delta",
+    base_model_id="meta-llama/Llama-2-7b-hf"
+)
+
+# Prefetch multiple deltas in background (10x faster workflow!)
+cache.prefetch_deltas(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    delta_paths=["./delta1", "./delta2", "./delta3"]
+)
+```
+
 ---
 
 ## Why Sparse?
@@ -196,13 +237,12 @@ dataset = reconstruct_from_dataset_delta("./squad_v2_delta")
 - transformers
 - (Optional) Rust for faster reconstruction
 
-```bash
-# Install with Rust acceleration
-cd rust && cargo build --release
-```
+Rust acceleration is included automatically - no additional setup needed.
 
 ---
 
 ## License
 
-Proprietary. See [LICENSE](LICENSE) for details.
+Apache 2.0 - See [LICENSE](LICENSE) for details.
+
+Free for personal and commercial use.

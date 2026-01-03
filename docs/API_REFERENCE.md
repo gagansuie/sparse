@@ -1,7 +1,7 @@
 # Sparse API Reference
 
-**Version:** 0.3.0  
-**License:** Proprietary
+**Version:** 0.2.0  
+**License:** Apache 2.0
 
 Complete API reference for Sparse integration.
 
@@ -491,30 +491,104 @@ class DatasetDeltaStats:
 
 ---
 
-## Rust Acceleration
+## Fast Reconstruction & Caching
 
-For 10-20x faster delta compression, install the Rust extension:
+### DeltaCache
 
-```bash
-cd rust/
-cargo build --release
-```
-
-**Check if Rust is available:**
+Auto-caching system for reconstructed models. Reconstruct once, load instantly forever.
 
 ```python
-from core.delta_rust import is_rust_available, get_rust_info
+from core.fast_reconstruct import DeltaCache
 
-if is_rust_available():
-    print("✓ Rust acceleration enabled")
-    info = get_rust_info()
-    print(f"Features: {', '.join(info['features'])}")
-else:
-    print("Using Python fallback (still works!)")
+# Initialize cache
+cache = DeltaCache(
+    cache_dir="~/.cache/sparse",  # Optional, default location
+    max_cache_size_gb=100.0,       # Optional, max cache size
+    max_workers=2                  # Optional, concurrent jobs
+)
+
+# Get or reconstruct (waits for completion)
+model_path = cache.get_or_reconstruct(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    delta_path="./my-delta",
+    background=False
+)
+
+# Load reconstructed model
+from transformers import AutoModelForCausalLM
+model = AutoModelForCausalLM.from_pretrained(model_path)
+
+# Check cache stats
+stats = cache.get_stats()
+print(f"Cache hits: {stats['cache_hits']}")
+print(f"Avg reconstruction time: {stats['avg_reconstruction_time_s']:.1f}s")
 ```
 
-**No code changes needed** - API calls automatically use Rust when available.
+**Key Features:**
+- **Smart caching**: Reconstructed models cached in `~/.cache/sparse/reconstructed/`
+- **HF Hub integration**: Base models use HuggingFace's existing cache (no duplication)
+- **Background reconstruction**: Prefetch multiple deltas in parallel
+- **4-second reconstruction**: Rust-accelerated delta application
+
+### Background Prefetching
+
+Pre-load multiple deltas while you work:
+
+```python
+# Prefetch 10 deltas in background
+job_ids = cache.prefetch_deltas(
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    delta_paths=[f"./delta_{i}" for i in range(10)]
+)
+
+# Check job status
+for delta_path, job_id in job_ids.items():
+    job = cache.get_job_status(job_id)
+    print(f"{delta_path}: {job.status}")
+```
+
+### Drop-in Replacement for from_pretrained
+
+```python
+from core.fast_reconstruct import from_pretrained_with_delta
+
+# Automatically detects deltas and reconstructs
+model = from_pretrained_with_delta(
+    "./my-delta",
+    base_model_id="meta-llama/Llama-2-7b-hf",
+    delta_mode="auto",  # "auto", "prefer_delta", "full_only"
+    torch_dtype=torch.float16
+)
+```
+
+### Benchmark Reconstruction Speed
+
+```python
+from core.fast_reconstruct import benchmark_reconstruction
+
+# Test Rust acceleration speed
+result = benchmark_reconstruction(tensor_size=1_000_000, iterations=10)
+print(f"7B model reconstruction: {result['estimated_times']['7B_model']}")
+# Output: ~4 seconds
+```
 
 ---
 
-**Questions?** Contact gagan.suie@sparselabs.ai
+## Rust Acceleration
+
+**Rust acceleration is included automatically** when you install `sparse-llm`. No additional setup required.
+
+```python
+# Verify Rust is working
+from core.delta_rust import get_rust_info
+
+info = get_rust_info()
+print("✓ Rust acceleration enabled")
+print(f"Features: {', '.join(info['features'])}")
+```
+
+The package includes pre-built Rust binaries for all platforms (Linux, macOS, Windows).
+
+---
+
+**Questions?** Open an issue on [GitHub](https://github.com/gagansuie/sparse)

@@ -13,7 +13,7 @@ Key Design Decision: INTEGRATE with HuggingFace's existing cache, don't duplicat
 
 Why this works with Cloudflare CDN + git-lfs:
 - CDN makes downloads faster (edge caching)
-- Sparse makes downloads SMALLER (500MB delta vs 13GB model)
+- Sparse makes downloads SMALLER (500MB delta vs 14GB model)
 - These are complementary, not competing
 
 Timing targets:
@@ -49,18 +49,14 @@ except ImportError:
         decompress_delta_sparse,
     )
 
-# Import Rust acceleration (optional but recommended)
-RUST_AVAILABLE = False
+# Rust acceleration is REQUIRED
 try:
     import sparse_core
-    RUST_AVAILABLE = True
-except ImportError:
-    sparse_core = None
-
-
-def is_rust_available() -> bool:
-    """Check if Rust acceleration is available."""
-    return RUST_AVAILABLE
+except ImportError as e:
+    raise ImportError(
+        "Rust acceleration (sparse_core) is required but not installed. "
+        "Install with: pip install sparse-llm (includes Rust extension)"
+    ) from e
 
 
 def benchmark_reconstruction(tensor_size: int = 1_000_000, iterations: int = 10) -> Dict[str, Any]:
@@ -69,12 +65,6 @@ def benchmark_reconstruction(tensor_size: int = 1_000_000, iterations: int = 10)
     
     Returns timing info and estimated reconstruction time for various model sizes.
     """
-    if not RUST_AVAILABLE:
-        return {
-            "rust_available": False,
-            "error": "sparse_core not installed. Run: pip install sparse_core",
-        }
-    
     ms_per_iter = sparse_core.benchmark_int8_apply(tensor_size, iterations)
     
     return {
@@ -385,26 +375,10 @@ class DeltaCache:
                     indices = delta_data["indices"]
                     values = delta_data["values"]
                     
-                    # Try Rust acceleration
-                    if use_rust:
-                        try:
-                            from core.delta_rust import decompress_delta_sparse_rust, is_rust_available
-                            if is_rust_available():
-                                delta = decompress_delta_sparse_rust(
-                                    indices, values, tuple(base_weight.shape), base_weight.dtype
-                                )
-                            else:
-                                delta = decompress_delta_sparse(
-                                    indices, values, tuple(base_weight.shape), base_weight.dtype
-                                )
-                        except (ImportError, RuntimeError):
-                            delta = decompress_delta_sparse(
-                                indices, values, tuple(base_weight.shape), base_weight.dtype
-                            )
-                    else:
-                        delta = decompress_delta_sparse(
-                            indices, values, tuple(base_weight.shape), base_weight.dtype
-                        )
+                    # Rust-accelerated decompression
+                    delta = decompress_delta_sparse(
+                        indices, values, tuple(base_weight.shape), base_weight.dtype
+                    )
                     
                     state_dict[layer_name] = base_weight + delta.to(base_weight.device)
             
@@ -417,26 +391,10 @@ class DeltaCache:
                         quantized_bytes = f.read()
                     scale = torch.load(scale_file, map_location="cpu").item()
                     
-                    # Try Rust acceleration
-                    if use_rust:
-                        try:
-                            from core.delta_rust import decompress_delta_int8_rust, is_rust_available
-                            if is_rust_available():
-                                delta = decompress_delta_int8_rust(
-                                    quantized_bytes, scale, tuple(base_weight.shape), base_weight.dtype
-                                )
-                            else:
-                                delta = decompress_delta_int8(
-                                    quantized_bytes, scale, tuple(base_weight.shape), base_weight.dtype
-                                )
-                        except (ImportError, RuntimeError):
-                            delta = decompress_delta_int8(
-                                quantized_bytes, scale, tuple(base_weight.shape), base_weight.dtype
-                            )
-                    else:
-                        delta = decompress_delta_int8(
-                            quantized_bytes, scale, tuple(base_weight.shape), base_weight.dtype
-                        )
+                    # Rust-accelerated decompression
+                    delta = decompress_delta_int8(
+                        quantized_bytes, scale, tuple(base_weight.shape), base_weight.dtype
+                    )
                     
                     state_dict[layer_name] = base_weight + delta.to(base_weight.device)
         

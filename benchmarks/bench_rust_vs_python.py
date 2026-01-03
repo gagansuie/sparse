@@ -9,12 +9,8 @@ import numpy as np
 import torch
 from typing import Callable, Tuple
 
-# Try to import Rust implementation
-try:
-    from core.delta_rust import is_rust_available, get_rust_info
-    RUST_AVAILABLE = is_rust_available()
-except ImportError:
-    RUST_AVAILABLE = False
+# Rust is required
+from core.delta_rust import get_rust_info
 
 from core.delta import (
     compress_delta_sparse,
@@ -172,14 +168,10 @@ def print_system_info():
     print(f"NumPy version: {np.__version__}")
     print(f"CUDA available: {torch.cuda.is_available()}")
     
-    if RUST_AVAILABLE:
-        info = get_rust_info()
-        print(f"\n✓ Rust acceleration: AVAILABLE")
-        print(f"  Version: {info['version']}")
-        print(f"  Features: {', '.join(info['features'])}")
-    else:
-        print(f"\n✗ Rust acceleration: NOT AVAILABLE")
-        print("  Using Python fallback implementation")
+    info = get_rust_info()
+    print(f"\n✓ Rust acceleration: REQUIRED AND ENABLED")
+    print(f"  Version: {info['version']}")
+    print(f"  Features: {', '.join(info['features'])}")
 
 
 def main():
@@ -194,16 +186,7 @@ def main():
     print("BENCHMARKS COMPLETE")
     print("="*60)
     
-    if not RUST_AVAILABLE:
-        print("\nTo enable Rust acceleration:")
-        print("  cd rust/")
-        print("  bash build.sh")
-        print("\nExpected speedup with Rust:")
-        print("  - Sparse compression: 10-20x faster")
-        print("  - Sparse decompression: 10-15x faster")
-        print("  - INT8 quantization: 5-10x faster")
-    else:
-        print("\n✓ Rust acceleration is enabled!")
+    print("\n✓ Rust acceleration is enabled!")
 
 
 if __name__ == "__main__":

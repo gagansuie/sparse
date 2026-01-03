@@ -14,12 +14,14 @@ import numpy as np
 import torch
 from typing import Tuple
 
-# Try to import Rust implementation
+# Rust implementation is REQUIRED - no Python fallback
 try:
     import sparse_core
-    RUST_AVAILABLE = True
-except ImportError:
-    RUST_AVAILABLE = False
+except ImportError as e:
+    raise ImportError(
+        "Rust acceleration (sparse_core) is required but not installed. "
+        "Install with: pip install sparse-llm (includes Rust extension)"
+    ) from e
 
 
 # =============================================================================
@@ -46,19 +48,13 @@ def compress_delta_sparse(
     flat_delta = delta.flatten()
     original_size = delta.numel() * 2  # FP16 baseline
     
-    if RUST_AVAILABLE:
-        # RUST PATH: Fast parallel sparse search
-        delta_np = flat_delta.cpu().numpy().astype(np.float32)
-        indices_np, values_np = sparse_core.compress_sparse_delta(
-            delta_np, threshold=threshold, parallel=True
-        )
-        indices = torch.from_numpy(indices_np).to(torch.int32)
-        values = torch.from_numpy(values_np).to(delta.dtype)
-    else:
-        # PYTHON PATH: Simple vectorized ops (no duplicate logic)
-        mask = torch.abs(flat_delta) >= threshold
-        indices = torch.nonzero(mask).squeeze(-1).to(torch.int32)
-        values = flat_delta[mask]
+    # Rust: Fast parallel sparse search
+    delta_np = flat_delta.cpu().numpy().astype(np.float32)
+    indices_np, values_np = sparse_core.compress_sparse_delta(
+        delta_np, threshold=threshold, parallel=True
+    )
+    indices = torch.from_numpy(indices_np).to(torch.int32)
+    values = torch.from_numpy(values_np).to(delta.dtype)
     
     # Compression ratio calculation (shared)
     compressed_size = indices.numel() * 4 + values.numel() * 2
@@ -82,18 +78,11 @@ def decompress_delta_sparse(
     for dim in shape:
         flat_size *= dim
     
-    if RUST_AVAILABLE and values.device == torch.device('cpu'):
-        # RUST PATH: Fast scatter
-        indices_np = indices.cpu().numpy().astype(np.uint32)
-        values_np = values.cpu().numpy().astype(np.float32)
-        delta_np = sparse_core.decompress_sparse_delta(indices_np, values_np, flat_size)
-        delta = torch.from_numpy(delta_np).to(dtype).reshape(shape)
-    else:
-        # PYTHON PATH: Simple indexing
-        target_dtype = values.dtype if dtype == torch.float16 else dtype
-        delta = torch.zeros(flat_size, dtype=target_dtype, device=values.device)
-        delta[indices.long()] = values
-        delta = delta.reshape(shape)
+    # Rust: Fast scatter
+    indices_np = indices.cpu().numpy().astype(np.uint32)
+    values_np = values.cpu().numpy().astype(np.float32)
+    delta_np = sparse_core.decompress_sparse_delta(indices_np, values_np, flat_size)
+    delta = torch.from_numpy(delta_np).to(dtype).reshape(shape)
     
     return delta
 
@@ -115,17 +104,10 @@ def compress_delta_int8(
     """
     original_size = delta.numel() * 2  # FP16 baseline
     
-    if RUST_AVAILABLE:
-        # RUST PATH: Fast parallel quantization
-        delta_np = delta.cpu().numpy().astype(np.float32).flatten()
-        quantized_np, scale = sparse_core.quantize_int8(delta_np)
-        quantized_bytes = quantized_np.tobytes()
-    else:
-        # PYTHON PATH: Vectorized quantization
-        max_abs = torch.max(torch.abs(delta)).item()
-        scale = max_abs / 127.0 if max_abs > 1e-10 else 1.0
-        quantized = torch.clamp(torch.round(delta / scale), -127, 127).to(torch.int8)
-        quantized_bytes = quantized.cpu().numpy().tobytes()
+    # Rust: Fast parallel quantization
+    delta_np = delta.cpu().numpy().astype(np.float32).flatten()
+    quantized_np, scale = sparse_core.quantize_int8(delta_np)
+    quantized_bytes = quantized_np.tobytes()
     
     compressed_size = len(quantized_bytes) + 4
     compression_ratio = original_size / compressed_size
@@ -146,13 +128,9 @@ def decompress_delta_int8(
     """
     quantized_np = np.frombuffer(quantized_bytes, dtype=np.int8).copy()
     
-    if RUST_AVAILABLE:
-        # RUST PATH: Fast dequantization
-        delta_np = sparse_core.dequantize_int8(quantized_np, scale)
-        delta = torch.from_numpy(delta_np).to(dtype).reshape(shape)
-    else:
-        # PYTHON PATH: Simple multiply
-        delta = torch.from_numpy(quantized_np).to(dtype).reshape(shape) * scale
+    # Rust: Fast dequantization
+    delta_np = sparse_core.dequantize_int8(quantized_np, scale)
+    delta = torch.from_numpy(delta_np).to(dtype).reshape(shape)
     
     return delta
 
@@ -161,22 +139,16 @@ def decompress_delta_int8(
 # STATUS & INFO
 # =============================================================================
 
-def is_rust_available() -> bool:
-    """Check if Rust acceleration is available."""
-    return RUST_AVAILABLE
-
-
 def get_rust_info() -> dict:
     """Get information about Rust implementation."""
     return {
-        "available": RUST_AVAILABLE,
-        "version": "0.1.0" if RUST_AVAILABLE else None,
+        "available": True,
+        "version": "0.1.0",
         "features": [
             "sparse_compression",
             "int8_quantization", 
             "parallel_processing",
-        ] if RUST_AVAILABLE else [],
-        "mode": "rust" if RUST_AVAILABLE else "python",
+        ],
     }
 
 

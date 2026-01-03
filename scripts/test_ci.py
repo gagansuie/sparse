@@ -19,7 +19,7 @@ def test_package_structure():
     print("="*60)
     
     # Test core modules exist
-    core_modules = ['core', 'optimizer', 'cli']
+    core_modules = ['core', 'cli']
     for module in core_modules:
         module_path = Path(__file__).parent.parent / module
         assert module_path.exists(), f"Missing module: {module}"

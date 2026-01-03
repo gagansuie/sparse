@@ -7,10 +7,10 @@ name = "sparse"
 version = "0.1.1"
 description = "Delta compression for LLM fine-tunes + smart routing system for model hubs - $30-45M/year savings"
 readme = "README.md"
-license = {text = "Proprietary"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
 authors = [
-    {name = "Sparse Labs", email = "gagan.suie@sparselabs.ai"}
+    {name = "Gagan Suie", email = "singhga029@gmail.com"}
 ]
 keywords = ["llm", "delta-compression", "model-optimization", "fine-tuning", "model-hub", "smart-routing", "dataset-delta"]
 classifiers = [
@@ -43,7 +43,7 @@ all = ["sparse[dev]"]
 sparse = "cli.main:main"
 
 [project.urls]
-Homepage = "https://sparselabs.ai"
+Homepage = "https://github.com/gagansuie/sparse"
 Documentation = "https://github.com/gagansuie/sparse#readme"
 Repository = "https://github.com/gagansuie/sparse"
 

@@ -54,5 +54,5 @@ git push space main
 
 ## License
 
-**Proprietary Software**  
-Contact: gagan.suie@sparselabs.ai
+**Apache 2.0 License**  
+GitHub: https://github.com/gagansuie/sparse

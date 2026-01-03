@@ -335,6 +335,84 @@ def cmd_info(args):
     return 0
 
 
+def cmd_help(args):
+    """Show detailed help and examples."""
+    help_text = """
+================================================================================
+                    SPARSE - Delta Compression for Fine-tuned Models
+================================================================================
+
+Sparse compresses fine-tuned models by storing only the differences (deltas)
+from base models. Instead of 14GB, share 50-500MB.
+
+--------------------------------------------------------------------------------
+QUICK START
+--------------------------------------------------------------------------------
+
+  # Compress a fine-tune
+  sparse compress meta-llama/Llama-3.1-8B ./my-finetune -o ./my-delta
+
+  # Reconstruct from delta
+  sparse reconstruct meta-llama/Llama-3.1-8B ./my-delta -o ./reconstructed
+
+  # SVD compression (LoRA-style, ~50MB output)
+  sparse svd-compress meta-llama/Llama-3.1-8B ./my-finetune -o ./svd-delta --rank 64
+
+--------------------------------------------------------------------------------
+COMMANDS
+--------------------------------------------------------------------------------
+
+  MODEL COMPRESSION:
+    compress          Compress fine-tune as delta from base model
+    compress-adapter  Package a PEFT/LoRA adapter as delta
+    svd-compress      Extract LoRA-equivalent via SVD (~50MB output)
+
+  RECONSTRUCTION:
+    reconstruct       Reconstruct model from base + delta
+    svd-reconstruct   Reconstruct from base + SVD delta
+
+  DATASET COMPRESSION:
+    dataset-compress     Compress derivative dataset as delta
+    dataset-reconstruct  Reconstruct dataset from delta
+    dataset-estimate     Estimate compression savings
+
+  UTILITIES:
+    info              Show info about a delta artifact
+    help              Show this help message
+
+--------------------------------------------------------------------------------
+EXAMPLES
+--------------------------------------------------------------------------------
+
+  # Compress Llama fine-tune
+  sparse compress meta-llama/Llama-3.1-8B ./my-llama-finetune -o ./llama-delta
+
+  # Compress with SVD (smaller, lossy)
+  sparse svd-compress meta-llama/Llama-3.1-8B ./my-finetune -o ./svd-delta --rank 64
+
+  # Check delta info
+  sparse info ./llama-delta
+
+  # Reconstruct for use
+  sparse reconstruct meta-llama/Llama-3.1-8B ./llama-delta -o ./model-ready
+
+--------------------------------------------------------------------------------
+MORE HELP
+--------------------------------------------------------------------------------
+
+  sparse <command> --help    Show help for specific command
+  sparse compress --help     Show compress options
+  sparse svd-compress --help Show SVD compression options
+
+================================================================================
+    GitHub: https://github.com/gagansuie/sparse
+    License: Apache 2.0
+================================================================================
+"""
+    print(help_text)
+    return 0
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -438,6 +516,15 @@ def main():
     info_parser.add_argument("path", help="Path to delta artifact")
     
     # ==========================================================================
+    # HELP COMMAND
+    # ==========================================================================
+    
+    help_parser = subparsers.add_parser(
+        "help",
+        help="Show detailed help and examples"
+    )
+    
+    # ==========================================================================
     # PARSE AND DISPATCH
     # ==========================================================================
     
@@ -457,6 +544,7 @@ def main():
         "dataset-reconstruct": cmd_dataset_reconstruct,
         "dataset-estimate": cmd_dataset_estimate,
         "info": cmd_info,
+        "help": cmd_help,
     }
     
     if args.command in commands:
