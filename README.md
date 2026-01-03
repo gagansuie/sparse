@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚀 Sparse
+# ∴ Sparse
 
 **Delta Compression for Fine-tuned Models and Datasets**
 
@@ -235,9 +235,7 @@ cache.prefetch_deltas(
 - Python 3.9+
 - PyTorch 2.0+
 - transformers
-- (Optional) Rust for faster reconstruction
-
-Rust acceleration is included automatically - no additional setup needed.
+- Rust (required, included in package)
 
 ---
 
