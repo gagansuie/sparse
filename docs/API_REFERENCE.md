@@ -1,11 +1,8 @@
 # Sparse API Reference
 
-**Version:** 0.2.0  
-**License:** Apache 2.0
-
 Complete API reference for Sparse integration.
 
-⚡ **Performance Note:** Operations marked with ⚡ are Rust-accelerated (10-20x faster when Rust extension is installed).
+⚡ **Performance Note:** Operations marked with ⚡ use built-in Rust acceleration (10-20x faster).
 
 ---
 
@@ -25,7 +22,7 @@ Complete API reference for Sparse integration.
 
 Compress a fine-tuned model as a delta from base model. **100% lossless reconstruction.**
 
-**⚡ Rust-Accelerated:** This function automatically uses Rust implementation when available for 10-20x speedup.
+**⚡ Rust-Accelerated:** This function uses built-in Rust implementation for 10-20x speedup.
 
 **Signature:**
 ```python
@@ -72,7 +69,7 @@ sparse compress meta-llama/Llama-2-7b-hf my-org/llama-chat -o ./my-delta
 
 Reconstruct full model from base + delta. **100% identical to original.**
 
-**⚡ Rust-Accelerated:** Decompression is 10-15x faster with Rust extension.
+**⚡ Rust-Accelerated:** Decompression is 10-15x faster with built-in Rust acceleration.
 
 **Signature:**
 ```python

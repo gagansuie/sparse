@@ -20,7 +20,7 @@ try:
 except ImportError as e:
     raise ImportError(
         "Rust acceleration (sparse_core) is required but not installed. "
-        "Install with: pip install sparse-llm (includes Rust extension)"
+        "Install with: pip install sparse-llm"
     ) from e
 
 

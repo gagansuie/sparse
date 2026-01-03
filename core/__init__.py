@@ -45,7 +45,7 @@ from .fast_reconstruct import (
     get_global_cache,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.1.2"
 __all__ = [
     # Model delta compression (lossless)
     "compress_delta",
