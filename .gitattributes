@@ -1,0 +1,11 @@
+# Ensure specific files are tracked correctly
+*.py linguist-language=Python
+*.rs linguist-language=Rust
+*.sh linguist-language=Shell
+Dockerfile linguist-language=Dockerfile
+
+# Explicitly tell GitHub to ignore files that might be bloating "Other"
+# Examples: documentation, data, or generated logs
+*.json linguist-documentation
+*.txt linguist-documentation
+*.csv linguist-vendored
