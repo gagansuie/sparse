@@ -35,7 +35,7 @@ jobs:
       - name: Install dependencies and build
         run: |
           pip install maturin pytest numpy
-          pip install -e . --no-build-isolation
+          pip install . --no-build-isolation
       
       - name: Run tests
         run: |
