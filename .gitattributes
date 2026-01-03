@@ -1,11 +1,12 @@
-# Ensure specific files are tracked correctly
+# 1. Force detection for your core languages
 *.py linguist-language=Python
 *.rs linguist-language=Rust
-*.sh linguist-language=Shell
-Dockerfile linguist-language=Dockerfile
+*.sh linguist-detectable=true
+Dockerfile linguist-detectable=true
 
-# Explicitly tell GitHub to ignore files that might be bloating "Other"
-# Examples: documentation, data, or generated logs
-*.json linguist-documentation
-*.txt linguist-documentation
-*.csv linguist-vendored
+# 2. Hide things that are likely causing the "Other" bloat
+# This moves them out of the language stats entirely
+*.json linguist-vendored
+*.txt linguist-vendored
+*.md linguist-documentation
+LICENSE linguist-documentation
