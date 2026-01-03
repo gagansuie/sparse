@@ -32,10 +32,10 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
       
-      - name: Install maturin and build
+      - name: Install dependencies and build
         run: |
           pip install maturin pytest numpy
-          maturin develop --release
+          pip install -e . --no-build-isolation
       
       - name: Run tests
         run: |
