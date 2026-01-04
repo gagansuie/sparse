@@ -41,7 +41,7 @@ jobs:
       
       - name: Run tests
         run: |
-          python scripts/test_ci.py
+          python tests/test_ci.py
           pytest tests/test_rust_integration.py -v
 
   build:
