@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sparse-llm"
-version = "0.0.2"
+version = "0.0.3"
 description = "Delta compression for LLM fine-tunes - lossless or LoRA-equivalent SVD compression"
 readme = "README.md"
 license = {text = "Apache-2.0"}
