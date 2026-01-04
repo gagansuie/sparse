@@ -71,11 +71,36 @@ jobs:
           name: wheels-${{ matrix.os }}
           path: dist/*.whl
 
+  check-version:
+    name: Check if version is new
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    outputs:
+      should_publish: ${{ steps.check.outputs.should_publish }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check if version exists on PyPI
+        id: check
+        run: |
+          VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Check if version exists on PyPI
+          if pip index versions sparse-llm 2>/dev/null | grep -q "$VERSION"; then
+            echo "should_publish=false" >> $GITHUB_OUTPUT
+            echo "⚠️  Version $VERSION already exists on PyPI - skipping deployment"
+          else
+            echo "should_publish=true" >> $GITHUB_OUTPUT
+            echo "✓ Version $VERSION not found on PyPI - will deploy"
+          fi
+
   publish-pypi:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [build, check-version]
+    if: needs.check-version.outputs.should_publish == 'true'
     environment:
       name: pypi
       url: https://pypi.org/project/sparse-llm/
@@ -84,25 +109,9 @@ jobs:
         with:
           fetch-depth: 0
       
-      - name: Check if version exists on PyPI
-        id: check_version
-        run: |
-          VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
-          # Check if version exists on PyPI
-          if pip index versions sparse-llm 2>/dev/null | grep -q "$VERSION"; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "⚠️  Version $VERSION already exists on PyPI - skipping publish"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "✓ Version $VERSION not found on PyPI - will publish"
-          fi
-      
       - name: Create and push version tag
-        if: steps.check_version.outputs.exists == 'false'
         run: |
-          VERSION=${{ steps.check_version.outputs.version }}
+          VERSION=${{ needs.check-version.outputs.version }}
           echo "Version: v$VERSION"
           
           # Delete tag if it exists (locally and remote)
@@ -114,7 +123,6 @@ jobs:
           git push origin v$VERSION
       
       - name: Download all wheels
-        if: steps.check_version.outputs.exists == 'false'
         uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
@@ -122,7 +130,6 @@ jobs:
           merge-multiple: true
       
       - name: Publish to PyPI
-        if: steps.check_version.outputs.exists == 'false'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
@@ -130,8 +137,8 @@ jobs:
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build, publish-pypi]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [build, check-version, publish-pypi]
+    if: needs.check-version.outputs.should_publish == 'true'
     steps:
       - uses: actions/checkout@v4
       
@@ -142,29 +149,11 @@ jobs:
           path: dist/
           merge-multiple: true
       
-      - name: Check if release exists
-        id: check_release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=$(grep -m 1 'version = ' pyproject.toml | cut -d'"' -f2)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
-          # Check if release already exists
-          if gh release view v$VERSION &>/dev/null; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "⚠️  Release v$VERSION already exists - skipping"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "✓ Release v$VERSION not found - will create"
-          fi
-      
       - name: Create Release
-        if: steps.check_release.outputs.exists == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=${{ steps.check_release.outputs.version }}
+          VERSION=${{ needs.check-version.outputs.version }}
           gh release create v$VERSION \
             --title "Sparse v$VERSION" \
             --notes "## Sparse v$VERSION - Delta Compression for Fine-tuned Models

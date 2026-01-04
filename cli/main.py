@@ -7,45 +7,53 @@ Compress fine-tuned models and derivative datasets as deltas from base versions.
 import argparse
 import sys
 import json
+from tqdm import tqdm
 
 
 def cmd_delta_compress(args):
     """Compress fine-tune as delta from base model."""
     from core.delta import compress_delta
     
-    print(f"Sparse Delta Compress")
+    print("\n" + "="*70)
+    print("🗜️  SPARSE COMPRESS (Lossless Delta)")
+    print("="*70)
     print(f"  Base model:     {args.base_model}")
     print(f"  Fine-tune:      {args.finetune_model}")
     print(f"  Output:         {args.output}")
-    print()
+    print("="*70 + "\n")
+    
+    # Create tqdm progress bar
+    pbar = tqdm(total=100, desc="Compressing", bar_format="{l_bar}{bar}| {n:.0f}/{total:.0f}% [{elapsed}<{remaining}]")
+    last_progress = 0
     
     def progress_callback(msg, progress):
-        bar_width = 30
-        filled = int(bar_width * progress)
-        bar = "█" * filled + "░" * (bar_width - filled)
-        print(f"\r[{bar}] {progress*100:5.1f}% - {msg[:50]:<50}", end="", flush=True)
-        if progress >= 1.0:
-            print()
+        nonlocal last_progress
+        delta = int((progress - last_progress) * 100)
+        if delta > 0:
+            pbar.update(delta)
+            last_progress = progress
+        pbar.set_postfix_str(msg[:40])
     
-    manifest = compress_delta(
-        base_model_id=args.base_model,
-        finetune_model_id=args.finetune_model,
-        output_path=args.output,
-        progress_callback=progress_callback,
-    )
+    try:
+        manifest = compress_delta(
+            base_model_id=args.base_model,
+            finetune_model_id=args.finetune_model,
+            output_path=args.output,
+            progress_callback=progress_callback,
+        )
+    finally:
+        pbar.close()
     
-    print()
-    print("=" * 60)
-    print("DELTA COMPRESSION RESULTS")
-    print("=" * 60)
+    print("\n" + "="*70)
+    print("✅ COMPRESSION COMPLETE")
+    print("="*70)
     print(f"  Base model:       {manifest.base_model_id}")
     print(f"  Fine-tune:        {manifest.finetune_model_id}")
-    print(f"  Compression:      {manifest.compression_ratio:.2f}x")
-    print(f"  Total params:     {manifest.total_params:,}")
-    print(f"  Changed params:   {manifest.changed_params:,} ({100*manifest.changed_params/manifest.total_params:.1f}%)")
-    print(f"  Layers:           {manifest.num_layers}")
+    print(f"  Compression:      {manifest.compression_ratio:.1f}x")
+    print(f"  Changed params:   {manifest.changed_params:,} / {manifest.total_params:,}")
     print(f"  Output:           {args.output}")
-    print("=" * 60)
+    print("="*70)
+    print(f"\n💾 Delta saved to: {args.output}\n")
     
     return 0
 
@@ -55,24 +63,33 @@ def cmd_delta_reconstruct(args):
     """Reconstruct model from base + delta."""
     from core.delta import reconstruct_from_delta
     
-    print(f"Sparse Delta Reconstruct")
+    print("\n" + "="*70)
+    print("🔄 SPARSE RECONSTRUCT")
+    print("="*70)
     print(f"  Base model:     {args.base_model}")
     print(f"  Delta path:     {args.delta_path}")
-    print()
+    print(f"  Output:         {args.output}")
+    print("="*70 + "\n")
+    
+    pbar = tqdm(total=100, desc="Reconstructing", bar_format="{l_bar}{bar}| {n:.0f}/{total:.0f}% [{elapsed}<{remaining}]")
+    last_progress = 0
     
     def progress_callback(msg, progress):
-        bar_width = 30
-        filled = int(bar_width * progress)
-        bar = "█" * filled + "░" * (bar_width - filled)
-        print(f"\r[{bar}] {progress*100:5.1f}% - {msg[:50]:<50}", end="", flush=True)
-        if progress >= 1.0:
-            print()
+        nonlocal last_progress
+        delta = int((progress - last_progress) * 100)
+        if delta > 0:
+            pbar.update(delta)
+            last_progress = progress
+        pbar.set_postfix_str(msg[:40])
     
-    model = reconstruct_from_delta(
-        base_model_id=args.base_model,
-        delta_path=args.delta_path,
-        progress_callback=progress_callback,
-    )
+    try:
+        model = reconstruct_from_delta(
+            base_model_id=args.base_model,
+            delta_path=args.delta_path,
+            progress_callback=progress_callback,
+        )
+    finally:
+        pbar.close()
     
     print()
     print("=" * 60)
@@ -95,33 +112,40 @@ def cmd_compress_lossy(args):
     """Compress fine-tune with lossy compression (LoRA-equivalent quality)."""
     from core.delta import compress_delta_svd_full
     
-    print(f"Sparse Compress (Lossy)")
+    print("\n" + "="*70)
+    print("🎯 SPARSE COMPRESS (Lossy - LoRA Quality)")
+    print("="*70)
     print(f"  Base model:     {args.base_model}")
     print(f"  Fine-tune:      {args.finetune_model}")
     print(f"  Rank:           {args.rank}")
     print(f"  Output:         {args.output}")
-    print()
+    print("="*70 + "\n")
+    
+    pbar = tqdm(total=100, desc="Compressing (SVD)", bar_format="{l_bar}{bar}| {n:.0f}/{total:.0f}% [{elapsed}<{remaining}]")
+    last_progress = 0
     
     def progress_callback(msg, progress):
-        bar_width = 30
-        filled = int(bar_width * progress)
-        bar = "█" * filled + "░" * (bar_width - filled)
-        print(f"\r[{bar}] {progress*100:5.1f}% - {msg[:50]:<50}", end="", flush=True)
-        if progress >= 1.0:
-            print()
+        nonlocal last_progress
+        delta = int((progress - last_progress) * 100)
+        if delta > 0:
+            pbar.update(delta)
+            last_progress = progress
+        pbar.set_postfix_str(msg[:40])
     
-    manifest = compress_delta_svd_full(
-        base_model_id=args.base_model,
-        finetune_model_id=args.finetune_model,
-        output_path=args.output,
-        rank=args.rank,
-        progress_callback=progress_callback,
-    )
+    try:
+        manifest = compress_delta_svd_full(
+            base_model_id=args.base_model,
+            finetune_model_id=args.finetune_model,
+            output_path=args.output,
+            rank=args.rank,
+            progress_callback=progress_callback,
+        )
+    finally:
+        pbar.close()
     
-    print()
-    print("=" * 60)
-    print("LOSSY COMPRESSION RESULTS")
-    print("=" * 60)
+    print("\n" + "="*70)
+    print("✅ LOSSY COMPRESSION COMPLETE")
+    print("="*70)
     print(f"  Base model:       {manifest.base_model_id}")
     print(f"  Fine-tune:        {manifest.finetune_model_id}")
     print(f"  Rank:             {manifest.rank}")
@@ -131,7 +155,8 @@ def cmd_compress_lossy(args):
     print(f"  Avg error:        {manifest.avg_reconstruction_error:.6f}")
     print(f"  Max error:        {manifest.max_reconstruction_error:.6f}")
     print(f"  Output:           {args.output}")
-    print("=" * 60)
+    print("="*70)
+    print(f"\n💾 Delta saved to: {args.output}\n")
     
     return 0
 

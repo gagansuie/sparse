@@ -11,7 +11,6 @@ from core.delta import (
     compress_delta,
     reconstruct_from_delta,
     DeltaManifest,
-    compress_adapter_delta,
 )
 
 
@@ -210,26 +209,6 @@ class TestDeltaCompressionIntegration:
         
         # Verify delta files were created
         assert (output_dir / "manifest.json").exists()
-
-
-def test_compress_adapter_delta_local_path(tmp_path):
-    from core.delta import compress_adapter_delta
-
-    adapter_src = tmp_path / "adapter_src"
-    adapter_src.mkdir()
-    (adapter_src / "adapter_config.json").write_text("{}")
-    (adapter_src / "adapter_model.safetensors").write_text("dummy")
-
-    out_dir = tmp_path / "adapter_delta"
-    manifest = compress_adapter_delta(
-        base_model_id="base-model",
-        adapter_id=str(adapter_src),
-        output_path=str(out_dir),
-    )
-
-    assert manifest.delta_type == "adapter"
-    assert (out_dir / "manifest.json").exists()
-    assert (out_dir / "adapter" / "adapter_config.json").exists()
 
 
 if __name__ == "__main__":

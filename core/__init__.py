@@ -38,6 +38,20 @@ from .dataset_delta import (
     DatasetDeltaStats,
 )
 
+# Performance optimization modules
+from .model_cache import BaseModelCache, get_cache
+from .parallel_compress import compute_deltas_parallel, batch_layer_processing
+from .mmap_storage import MmapDeltaStorage
+from .lazy_loading import LazyModelLoader, compute_deltas_streaming
+from .smart_heuristics import (
+    choose_optimal_compression,
+    get_compression_params,
+    estimate_compression_ratio,
+    analyze_layer_type,
+)
+from .differential_compress import DifferentialCompressor
+from .delta_streaming import _compress_delta_streaming
+
 from .fast_reconstruct import (
     DeltaCache,
     from_pretrained_with_delta,
@@ -64,6 +78,19 @@ __all__ = [
     "compress_dataset_delta",
     "reconstruct_from_dataset_delta",
     "estimate_dataset_delta_savings",
+    # Performance optimizations
+    "BaseModelCache",
+    "get_cache",
+    "compute_deltas_parallel",
+    "batch_layer_processing",
+    "MmapDeltaStorage",
+    "LazyModelLoader",
+    "compute_deltas_streaming",
+    "choose_optimal_compression",
+    "get_compression_params",
+    "estimate_compression_ratio",
+    "analyze_layer_type",
+    "DifferentialCompressor",
     "DatasetDeltaStats",
     # Fast reconstruction
     "DeltaCache",

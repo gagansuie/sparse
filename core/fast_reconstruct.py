@@ -391,12 +391,37 @@ class DeltaCache:
                         quantized_bytes = f.read()
                     scale = torch.load(scale_file, map_location="cpu").item()
                     
-                    # Rust-accelerated decompression
-                    delta = decompress_delta_int8(
-                        quantized_bytes, scale, tuple(base_weight.shape), base_weight.dtype
-                    )
-                    
-                    state_dict[layer_name] = base_weight + delta.to(base_weight.device)
+                    # GPU-accelerated INT8 delta application (if CUDA available)
+                    if torch.cuda.is_available() and base_weight.is_cuda:
+                        try:
+                            # Use GPU-optimized ops for faster reconstruction
+                            gpu_ops = sparse_core.GpuOptimizedOps(tile_size=256, use_fma=True)
+                            
+                            # Decompress to quantized tensor
+                            import numpy as np
+                            quantized = np.frombuffer(quantized_bytes, dtype=np.int8)
+                            quantized = torch.from_numpy(quantized).reshape(base_weight.shape)
+                            
+                            # Apply with GPU-optimized tiled processing
+                            base_flat = base_weight.flatten().cpu().numpy()
+                            quant_flat = quantized.flatten().cpu().numpy()
+                            result = gpu_ops.apply_int8_delta_tiled(base_flat, quant_flat, scale)
+                            
+                            # Reshape and move back to GPU
+                            delta_result = torch.from_numpy(np.array(result)).reshape(base_weight.shape)
+                            state_dict[layer_name] = delta_result.to(base_weight.device, dtype=base_weight.dtype)
+                        except Exception:
+                            # Fallback to standard Rust decompression
+                            delta = decompress_delta_int8(
+                                quantized_bytes, scale, tuple(base_weight.shape), base_weight.dtype
+                            )
+                            state_dict[layer_name] = base_weight + delta.to(base_weight.device)
+                    else:
+                        # Standard Rust-accelerated decompression
+                        delta = decompress_delta_int8(
+                            quantized_bytes, scale, tuple(base_weight.shape), base_weight.dtype
+                        )
+                        state_dict[layer_name] = base_weight + delta.to(base_weight.device)
         
         # Load state dict back
         model.load_state_dict(state_dict)
