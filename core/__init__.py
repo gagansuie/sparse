@@ -22,7 +22,6 @@ Usage:
 
 from .delta import (
     compress_delta,
-    compress_adapter_delta,
     validate_int8_delta_quality,
     reconstruct_from_delta,
     DeltaManifest,
@@ -54,7 +53,6 @@ except Exception:
 __all__ = [
     # Model delta compression (lossless)
     "compress_delta",
-    "compress_adapter_delta",
     "validate_int8_delta_quality",
     "reconstruct_from_delta",
     "DeltaManifest",

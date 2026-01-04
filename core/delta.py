@@ -38,7 +38,7 @@ import shutil
 class LayerDelta:
     """Delta for a single layer."""
     name: str
-    delta_type: str  # "sparse", "int8", "int4", "zero"
+    delta_type: str  # "sparse", "int8", "zero"
     compression_ratio: float
     original_shape: Tuple[int, ...]
     
@@ -164,7 +164,7 @@ def choose_delta_method(
     """Choose optimal compression method for a delta.
     
     Returns:
-        One of "zero", "sparse", "int8", "int4"
+        One of "zero", "sparse", "int8"
     """
     # If delta is essentially zero
     if stats["max_abs"] < 1e-8:
@@ -178,7 +178,7 @@ def choose_delta_method(
     if stats["max_abs"] < 0.1:
         return "int8"
     
-    # For larger deltas, still use INT8 (could add INT4 for aggressive compression)
+    # For larger deltas, use INT8
     return "int8"
 
 
