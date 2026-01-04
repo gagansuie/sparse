@@ -50,42 +50,6 @@ def cmd_delta_compress(args):
     return 0
 
 
-def cmd_delta_compress_adapter(args):
-    """Package a PEFT adapter (e.g., LoRA) as a delta artifact."""
-    from core.delta import compress_adapter_delta
-
-    print(f"Sparse Delta Compress (Adapter)")
-    print(f"  Base model:     {args.base_model}")
-    print(f"  Adapter:        {args.adapter}")
-    print(f"  Output:         {args.output}")
-    print()
-
-    def progress_callback(msg, progress):
-        bar_width = 30
-        filled = int(bar_width * progress)
-        bar = "█" * filled + "░" * (bar_width - filled)
-        print(f"\r[{bar}] {progress*100:5.1f}% - {msg[:50]:<50}", end="", flush=True)
-        if progress >= 1.0:
-            print()
-
-    manifest = compress_adapter_delta(
-        base_model_id=args.base_model,
-        adapter_id=args.adapter,
-        output_path=args.output,
-        progress_callback=progress_callback,
-    )
-
-    print()
-    print("=" * 60)
-    print("ADAPTER DELTA PACKAGED")
-    print("=" * 60)
-    print(f"  Base model:       {manifest.base_model_id}")
-    print(f"  Adapter:          {manifest.finetune_model_id}")
-    print(f"  Output:           {args.output}")
-    print("=" * 60)
-
-    return 0
-
 
 def cmd_delta_reconstruct(args):
     """Reconstruct model from base + delta."""
@@ -365,7 +329,6 @@ COMMANDS
   MODEL COMPRESSION:
     compress          Compress fine-tune as delta from base (lossless)
     compress-lossy    Compress with lossy compression (~50MB output)
-    compress-adapter  Package a PEFT/LoRA adapter as delta
 
   RECONSTRUCTION:
     reconstruct       Reconstruct model from lossless delta
@@ -434,15 +397,6 @@ def main():
     compress_parser.add_argument("base_model", help="Base model ID (e.g., meta-llama/Llama-2-7b-hf)")
     compress_parser.add_argument("finetune_model", help="Fine-tuned model ID or path")
     compress_parser.add_argument("--output", "-o", required=True, help="Output directory for delta")
-    
-    # sparse compress-adapter <base> <adapter> -o <output>
-    compress_adapter_parser = subparsers.add_parser(
-        "compress-adapter",
-        help="Compress PEFT adapter (LoRA) as delta"
-    )
-    compress_adapter_parser.add_argument("base_model", help="Base model ID")
-    compress_adapter_parser.add_argument("adapter", help="Adapter ID or path")
-    compress_adapter_parser.add_argument("--output", "-o", required=True, help="Output directory")
     
     # sparse reconstruct <base> <delta> [-o <output>]
     reconstruct_parser = subparsers.add_parser(
@@ -536,7 +490,6 @@ def main():
     
     commands = {
         "compress": cmd_delta_compress,
-        "compress-adapter": cmd_delta_compress_adapter,
         "reconstruct": cmd_delta_reconstruct,
         "compress-lossy": cmd_compress_lossy,
         "reconstruct-lossy": cmd_reconstruct_lossy,

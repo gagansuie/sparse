@@ -10,9 +10,8 @@ Complete API reference for Sparse integration.
 
 1. [Model Delta Compression (Lossless)](#model-delta-compression-lossless)
 2. [Lossy Compression](#lossy-compression)
-3. [Adapter Packaging](#adapter-packaging)
-4. [Dataset Delta Compression](#dataset-delta-compression)
-5. [Data Types](#data-types)
+3. [Dataset Delta Compression](#dataset-delta-compression)
+4. [Data Types](#data-types)
 
 ---
 
@@ -262,50 +261,6 @@ outputs = model.generate(...)
 **CLI:**
 ```bash
 sparse reconstruct-lossy meta-llama/Llama-2-7b-hf ./my-lossy-delta -o ./reconstructed-model
-```
-
----
-
-## Adapter Packaging
-
-### `compress_adapter_delta()`
-
-Package a LoRA/PEFT adapter as a delta artifact.
-
-**Signature:**
-```python
-def compress_adapter_delta(
-    base_model_id: str,
-    adapter_id: str,
-    output_path: str,
-    progress_callback: Optional[callable] = None
-) -> DeltaManifest
-```
-
-**Parameters:**
-- `base_model_id` (str): Base model the adapter was trained on
-- `adapter_id` (str): Adapter HuggingFace ID or local path
-- `output_path` (str): Output directory for delta artifact
-- `progress_callback` (callable, optional): Progress callback(msg, progress)
-
-**Returns:** `DeltaManifest` with `delta_type="adapter"`
-
-**Example:**
-```python
-from core import compress_adapter_delta
-
-manifest = compress_adapter_delta(
-    base_model_id="meta-llama/Llama-2-7b-hf",
-    adapter_id="my-org/llama-lora-adapter",
-    output_path="./adapter_delta"
-)
-
-print(f"Delta type: {manifest.delta_type}")  # "adapter"
-```
-
-**CLI:**
-```bash
-sparse compress-adapter meta-llama/Llama-2-7b-hf my-org/llama-lora -o ./adapter_delta
 ```
 
 ---
@@ -586,6 +541,126 @@ print(f"Features: {', '.join(info['features'])}")
 ```
 
 The package includes pre-compiled Rust extensions for all platforms (Linux, macOS, Windows), bundled in the Python wheel.
+
+---
+
+## Advanced Performance Optimizations
+
+Sparse includes several advanced optimizations for maximum performance.
+
+### Zstd Compression ⚡
+
+Additional compression layer for delta files using Zstd. Achieves ~2x smaller files on top of INT8 quantization.
+
+```python
+from sparse_core import compress_zstd, decompress_zstd
+
+# Compress any bytes data
+data = b"delta_data..." * 10000
+compressed = compress_zstd(data, level=3)  # level: 1 (fast) to 19 (best)
+decompressed = decompress_zstd(compressed)
+
+print(f"Ratio: {len(data) / len(compressed):.1f}x")  # Typically 2-10x
+```
+
+**Compression Levels:**
+| Level | Speed | Ratio |
+|-------|-------|-------|
+| 1 | Fastest | ~2x |
+| 3 | Default | ~3-4x |
+| 19 | Best | ~5-10x |
+
+---
+
+### Streaming Reconstruction ⚡
+
+Pipeline I/O and compute for large model reconstruction. Overlaps disk reads with delta application for maximum throughput.
+
+```python
+from sparse_core import StreamingReconstructor
+
+# Create streaming reconstructor
+reconstructor = StreamingReconstructor(
+    num_workers=4,       # Parallel workers
+    chunk_size=65536,    # Elements per chunk
+    prefetch_count=2     # Prefetch buffer size
+)
+
+# Process layers in streaming pipeline
+stats = reconstructor.process_layers_streaming(layer_count=100)
+print(f"Throughput: {stats.throughput_mbs:.1f} MB/s")
+print(f"Layers processed: {stats.layers_processed}")
+
+# Benchmark sequential vs parallel
+bench = reconstructor.benchmark(layer_count=10, elements_per_layer=1_000_000)
+print(f"Sequential: {bench.sequential_ms}ms")
+print(f"Parallel: {bench.parallel_ms}ms")
+print(f"Speedup: {bench.speedup:.1f}x")
+```
+
+---
+
+### GPU-Optimized Operations ⚡
+
+Tiled processing and CUDA-friendly memory access patterns for GPU acceleration.
+
+```python
+from sparse_core import GpuOptimizedOps, get_cuda_launch_config, benchmark_gpu_ops
+import numpy as np
+
+# Create GPU-optimized ops handler
+gpu_ops = GpuOptimizedOps(
+    tile_size=256,   # Tile size for cache efficiency
+    use_fma=True     # Use fused multiply-add
+)
+
+# Apply INT8 delta with tiled processing
+base = np.random.randn(1_000_000).astype(np.float32)
+delta = np.random.randint(-127, 127, 1_000_000, dtype=np.int8)
+result = gpu_ops.apply_int8_delta_tiled(base, delta, scale=0.001)
+
+# Get optimal tile size
+optimal = gpu_ops.get_optimal_tile_size(tensor_size=10_000_000)
+print(f"Optimal tile size: {optimal}")
+
+# Get CUDA launch configuration
+config = get_cuda_launch_config(tensor_size=1_000_000)
+print(f"Grid: {config.grid_size}, Block: {config.block_size}")
+
+# Benchmark
+bench = benchmark_gpu_ops(tensor_size=1_000_000, iterations=10)
+print(f"Speedup: {bench.speedup:.1f}x")
+```
+
+**PyTorch CUDA Integration:**
+
+```python
+from sparse_core import generate_cuda_kernel_code
+
+# Get optimized PyTorch CUDA code
+cuda_code = generate_cuda_kernel_code()
+exec(cuda_code)  # Defines apply_int8_delta_cuda, batch_apply_deltas_cuda
+
+# Use with PyTorch tensors on GPU
+import torch
+base = torch.randn(1_000_000, device='cuda')
+delta = torch.randint(-127, 127, (1_000_000,), dtype=torch.int8, device='cuda')
+result = apply_int8_delta_cuda(base, delta, scale=0.001)
+```
+
+---
+
+### SIMD/AVX2 Acceleration
+
+Native CPU SIMD instructions are automatically enabled for x86_64 (AVX2+FMA) and ARM64 (NEON) platforms.
+
+**Enabled features by platform:**
+| Platform | SIMD Features |
+|----------|---------------|
+| x86_64 Linux/macOS | AVX2, FMA |
+| ARM64 Linux/macOS | NEON |
+
+No configuration required - optimizations are built into the wheel.
 
 ---
 
