@@ -115,7 +115,7 @@ def compute_layer_delta(
     finetune_weight: torch.Tensor,
     threshold: float = 1e-6,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
-    """Compute delta between base and fine-tuned weights.
+    """Compute delta between base and fine-tuned weights with Rust SIMD acceleration.
     
     Args:
         base_weight: Base model weight
@@ -125,6 +125,29 @@ def compute_layer_delta(
     Returns:
         Tuple of (delta_tensor, stats_dict)
     """
+    # Try Rust SIMD acceleration for float32 2D tensors
+    try:
+        from sparse_core import compute_delta_simd
+        import numpy as np
+        
+        if base_weight.dtype == torch.float32 and len(base_weight.shape) == 2:
+            delta_np, stats_rust = compute_delta_simd(
+                base_weight.cpu().numpy(),
+                finetune_weight.cpu().numpy()
+            )
+            delta = torch.from_numpy(delta_np).to(base_weight.device)
+            stats = {
+                "l2_norm": stats_rust.l2_norm,
+                "max_abs": stats_rust.max_abs,
+                "sparsity": stats_rust.sparsity,
+                "mean": delta.mean().item(),
+                "std": delta.std().item(),
+            }
+            return delta, stats
+    except (ImportError, RuntimeError, AttributeError):
+        pass  # Fall back to Python
+    
+    # Python fallback
     delta = finetune_weight - base_weight
     
     # Compute statistics
@@ -188,8 +211,13 @@ def compress_delta(
     output_path: str,
     device: str = "cuda",
     progress_callback: Optional[callable] = None,
+    force_lazy_loading: Optional[bool] = None,
 ) -> DeltaManifest:
     """Compress a fine-tuned model as delta from base model.
+    
+    Automatically uses optimizations based on model size:
+    - Models 30B+: Lazy loading (memory-efficient)
+    - Models 30B+: Parallel processing (faster)
     
     Args:
         base_model_id: HuggingFace model ID for base model
@@ -197,24 +225,72 @@ def compress_delta(
         output_path: Path to save delta artifact
         device: Device for computation
         progress_callback: Optional callback(msg, progress)
+        force_lazy_loading: Override auto-detection (True=always lazy, False=never lazy, None=auto)
         
     Returns:
         DeltaManifest with compression statistics
     """
-    from transformers import AutoModelForCausalLM
+    from transformers import AutoModelForCausalLM, AutoConfig
+    from core.model_cache import get_cache
     
     def log(msg: str, progress: float = 0.0):
         if progress_callback:
             progress_callback(msg, progress)
         print(f"[Delta] {msg}")
     
-    log(f"Loading base model: {base_model_id}", 0.0)
+    # Auto-detect model size for optimization selection
+    try:
+        config = AutoConfig.from_pretrained(base_model_id)
+        # Estimate params from hidden size and layers
+        hidden_size = getattr(config, 'hidden_size', 4096)
+        num_layers = getattr(config, 'num_hidden_layers', 32)
+        vocab_size = getattr(config, 'vocab_size', 50000)
+        # Rough estimation: 12 * hidden_size^2 * num_layers (for attention + MLP)
+        estimated_params_b = (12 * hidden_size * hidden_size * num_layers + vocab_size * hidden_size) / 1e9
+        
+        use_lazy = force_lazy_loading if force_lazy_loading is not None else (estimated_params_b >= 30)
+        use_parallel = estimated_params_b >= 30
+        
+        if use_lazy:
+            log(f"Detected large model 🚀 ({estimated_params_b:.1f}B params) - using lazy loading", 0.0)
+        if use_parallel:
+            log(f"Detected large model 🚀 ({estimated_params_b:.1f}B params) - using parallel processing", 0.0)
+    except Exception:
+        # Fallback: no auto-detection
+        use_lazy = force_lazy_loading if force_lazy_loading is not None else False
+        use_parallel = False
+        log("Could not detect model size - using standard loading", 0.0)
     
-    # Load base model
-    base_model = AutoModelForCausalLM.from_pretrained(
+    # Use lazy loading for large models (memory-efficient)
+    if use_lazy:
+        from core.lazy_loading import LazyModelLoader, compute_deltas_streaming
+        
+        log(f"Loading base model (lazy): {base_model_id}", 0.0)
+        base_loader = LazyModelLoader(base_model_id)
+        
+        log(f"Loading fine-tuned model (lazy): {finetune_model_id}", 0.15)
+        ft_loader = LazyModelLoader(finetune_model_id)
+        
+        # Use streaming delta computation
+        return _compress_delta_streaming(
+            base_model_id=base_model_id,
+            finetune_model_id=finetune_model_id,
+            base_loader=base_loader,
+            ft_loader=ft_loader,
+            output_path=output_path,
+            use_parallel=use_parallel,
+            log=log,
+            progress_callback=progress_callback,
+        )
+    
+    # Standard path: load full models (faster for < 30B models)
+    cache = get_cache(max_size_gb=50)
+    
+    log(f"Loading base model: {base_model_id}", 0.0)
+    base_model = cache.get_or_load(
         base_model_id,
         torch_dtype=torch.float16,
-        device_map="cpu",  # Keep on CPU for memory efficiency
+        device_map="cpu",
         low_cpu_mem_usage=True,
     )
     base_hash = compute_model_hash(base_model)
@@ -271,8 +347,13 @@ def compress_delta(
         # Compute delta
         delta, stats = compute_layer_delta(base_weight, finetune_weight)
         
-        # Choose compression method
-        method = choose_delta_method(delta, stats)
+        # Choose compression method with smart heuristics
+        from core.smart_heuristics import choose_optimal_compression
+        try:
+            method = choose_optimal_compression(delta, stats, name)
+        except Exception:
+            # Fallback to original heuristics
+            method = choose_delta_method(delta, stats)
         
         # Track sizes
         original_size = delta.numel() * 2
@@ -541,13 +622,44 @@ def reconstruct_from_delta(
             with open(deltas_path / f"{name.replace('.', '_')}.bin", "rb") as f:
                 quantized_bytes = f.read()
             
-            delta = decompress_delta_int8(
-                quantized_bytes,
-                layer_info["scale"],
-                shape,
-                dtype=param.dtype,
-            )
-            param.data.add_(delta.to(param.device))
+            # GPU-accelerated INT8 delta application (if CUDA available)
+            if device == "cuda" and torch.cuda.is_available() and param.is_cuda:
+                try:
+                    import sparse_core
+                    import numpy as np
+                    
+                    gpu_ops = sparse_core.GpuOptimizedOps(tile_size=256, use_fma=True)
+                    
+                    # Decompress to quantized tensor
+                    quantized = np.frombuffer(quantized_bytes, dtype=np.int8)
+                    quantized = torch.from_numpy(quantized).reshape(shape)
+                    
+                    # Apply with GPU-optimized tiled processing
+                    base_flat = param.data.flatten().cpu().numpy()
+                    quant_flat = quantized.flatten().numpy()
+                    result = gpu_ops.apply_int8_delta_tiled(base_flat, quant_flat, layer_info["scale"])
+                    
+                    # Reshape and update parameter
+                    delta_result = torch.from_numpy(np.array(result)).reshape(shape)
+                    param.data.copy_(delta_result.to(param.device, dtype=param.dtype))
+                except Exception:
+                    # Fallback to standard decompression
+                    delta = decompress_delta_int8(
+                        quantized_bytes,
+                        layer_info["scale"],
+                        shape,
+                        dtype=param.dtype,
+                    )
+                    param.data.add_(delta.to(param.device))
+            else:
+                # Standard Rust-accelerated decompression
+                delta = decompress_delta_int8(
+                    quantized_bytes,
+                    layer_info["scale"],
+                    shape,
+                    dtype=param.dtype,
+                )
+                param.data.add_(delta.to(param.device))
             
         else:
             # Load full delta

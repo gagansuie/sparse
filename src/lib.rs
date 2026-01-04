@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 mod compress;
 mod compression;
 mod decompress;
+mod delta_compute;
 mod gpu;
 mod quantize;
 mod reconstruct;
@@ -12,6 +13,7 @@ mod utils;
 pub use compress::*;
 pub use compression::*;
 pub use decompress::*;
+pub use delta_compute::*;
 pub use gpu::*;
 pub use quantize::*;
 pub use reconstruct::*;
@@ -53,13 +55,13 @@ fn sparse_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<BenchmarkResult>()?;
 
     // GPU acceleration
-    m.add_class::<GpuInfo>()?;
     m.add_class::<GpuOptimizedOps>()?;
-    m.add_class::<CudaLaunchConfig>()?;
     m.add_class::<GpuBenchmark>()?;
-    m.add_function(wrap_pyfunction!(get_cuda_launch_config, m)?)?;
-    m.add_function(wrap_pyfunction!(generate_cuda_kernel_code, m)?)?;
     m.add_function(wrap_pyfunction!(benchmark_gpu_ops, m)?)?;
+
+    // Fast delta computation
+    m.add_class::<DeltaStats>()?;
+    m.add_function(wrap_pyfunction!(compute_delta_simd, m)?)?;
 
     Ok(())
 }

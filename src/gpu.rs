@@ -10,31 +10,7 @@ use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 use rayon::prelude::*;
 
-/// GPU acceleration status and capabilities
-#[pyclass]
-#[derive(Clone)]
-pub struct GpuInfo {
-    #[pyo3(get)]
-    pub cuda_available: bool,
-    #[pyo3(get)]
-    pub device_count: usize,
-    #[pyo3(get)]
-    pub recommended_backend: String,
-}
-
-#[pymethods]
-impl GpuInfo {
-    #[new]
-    fn new() -> Self {
-        // In Rust, we can't directly check CUDA availability
-        // This is detected at Python level via torch.cuda.is_available()
-        GpuInfo {
-            cuda_available: false, // Set from Python
-            device_count: 0,
-            recommended_backend: "cpu".to_string(),
-        }
-    }
-}
+// Removed: GpuInfo - unused, CUDA detection handled by PyTorch
 
 /// High-performance delta application optimized for GPU data layout
 /// Processes data in tiles for better cache/memory coalescing
@@ -133,81 +109,7 @@ impl GpuOptimizedOps {
     }
 }
 
-/// CUDA kernel dispatch hints for Python
-/// These functions return the optimal parameters for PyTorch CUDA operations
-#[pyfunction]
-pub fn get_cuda_launch_config(tensor_size: usize) -> PyResult<CudaLaunchConfig> {
-    // Standard CUDA grid/block sizing heuristics
-    let block_size = 256; // Typical optimal block size
-    let grid_size = (tensor_size + block_size - 1) / block_size;
-
-    Ok(CudaLaunchConfig {
-        grid_size,
-        block_size,
-        shared_memory_bytes: 0,
-        stream_count: 1,
-    })
-}
-
-#[pyclass]
-#[derive(Clone)]
-pub struct CudaLaunchConfig {
-    #[pyo3(get)]
-    pub grid_size: usize,
-    #[pyo3(get)]
-    pub block_size: usize,
-    #[pyo3(get)]
-    pub shared_memory_bytes: usize,
-    #[pyo3(get)]
-    pub stream_count: usize,
-}
-
-/// Generate optimized PyTorch CUDA code for delta application
-#[pyfunction]
-pub fn generate_cuda_kernel_code() -> String {
-    r#"
-import torch
-import torch.cuda
-
-@torch.jit.script
-def apply_int8_delta_cuda(base: torch.Tensor, quantized: torch.Tensor, scale: float) -> torch.Tensor:
-    """Optimized CUDA delta application using PyTorch JIT."""
-    # Ensure tensors are on CUDA
-    assert base.is_cuda and quantized.is_cuda, "Tensors must be on CUDA"
-    
-    # Convert INT8 to float and apply scale in one fused operation
-    delta = quantized.to(base.dtype) * scale
-    
-    # In-place add for memory efficiency
-    return base.add_(delta)
-
-@torch.jit.script  
-def batch_apply_deltas_cuda(
-    bases: list[torch.Tensor],
-    deltas: list[torch.Tensor], 
-    scales: list[float]
-) -> list[torch.Tensor]:
-    """Batch delta application with CUDA streams for parallelism."""
-    results = []
-    for base, delta, scale in zip(bases, deltas, scales):
-        results.append(apply_int8_delta_cuda(base, delta, scale))
-    return results
-
-# Multi-stream version for maximum GPU utilization
-def apply_deltas_multistream(bases, deltas, scales, num_streams=4):
-    streams = [torch.cuda.Stream() for _ in range(num_streams)]
-    results = [None] * len(bases)
-    
-    for i, (base, delta, scale) in enumerate(zip(bases, deltas, scales)):
-        stream = streams[i % num_streams]
-        with torch.cuda.stream(stream):
-            results[i] = apply_int8_delta_cuda(base, delta, scale)
-    
-    # Synchronize all streams
-    torch.cuda.synchronize()
-    return results
-"#.to_string()
-}
+// Removed: CUDA launch config helpers - unused, PyTorch handles CUDA dispatch
 
 /// Benchmark CPU vs GPU-optimized operations
 #[pyfunction]
@@ -273,13 +175,6 @@ pub struct GpuBenchmark {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_cuda_launch_config() {
-        let config = get_cuda_launch_config(1_000_000).unwrap();
-        assert_eq!(config.block_size, 256);
-        assert!(config.grid_size > 0);
-    }
 
     #[test]
     fn test_optimal_tile_size() {
