@@ -13,7 +13,7 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://rustlang.org)
 
-[Quick Start](#quick-start) • [How It Works](#how-it-works) • [CLI](#cli) • [Python API](#python-api)
+[Quick Start](#quick-start) • [How It Works](#how-it-works) • [CLI](#cli-reference) • [Python API](#python-api)
 
 </div>
 
